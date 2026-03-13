@@ -2,7 +2,6 @@ import {
   ImageOverlay,
   MapContainer,
   Marker,
-  Pane,
   Polyline,
   Popup,
   TileLayer,
@@ -31,6 +30,7 @@ import {
   MAP_SOUTH,
   MAP_WEST,
 } from '../../config/mapConfig';
+import brandIcon from '../../assets/icone.png';
 
 type PoiType = 'atividade' | 'servico' | 'banheiro' | 'entrada';
 
@@ -253,12 +253,13 @@ const stateIcons = {
 
 const MAP_WIDTH = MAP_PIXEL_WIDTH;
 const MAP_HEIGHT = MAP_PIXEL_HEIGHT;
-const MAP_DEFAULT_ZOOM = 18;
-const MAP_FOCUS_ZOOM = 18.6;
-const MAP_MAX_ZOOM = 20.5;
-const LOCK_MAP_POSITION = true;
-const BASEMAP_ROTATION_DEG = -15;
-const BASEMAP_ROTATION_SCALE = 1.45;
+const MAP_DEFAULT_ZOOM = 19.4;
+const MAP_MIN_ZOOM = 16.3;
+const MAP_MAX_ZOOM = 20;
+const MAP_INTRO_ZOOM = 16.9;
+const MAP_INTRO_DURATION_MS = 1000;
+const BASEMAP_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const BASEMAP_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
 const mapBounds = new L.LatLngBounds([MAP_SOUTH, MAP_WEST], [MAP_NORTH, MAP_EAST]);
 const AVERAGE_WALKING_SPEED_MPS = 1.4;
 const WALKER_PROGRESS_UPDATE_MS = 250;
@@ -425,8 +426,8 @@ const rawInitialPois: PointData[] = [
     id: 'entrada_principal',
     nome: 'Entrada Principal',
     tipo: 'entrada',
-    x: 752,
-    y: 834,
+    x: 1034,
+    y: 850,
     descricao: 'Acesso principal do evento social.',
     imagemUrl: '/images/pois/indicadores/entrada.svg',
     corDestaque: '#16a34a',
@@ -585,12 +586,69 @@ const MapController = ({
   useEffect(() => {
     if (focusPoint) {
       map.stop();
-      map.flyTo(imageToLatLng(focusPoint.x, focusPoint.y), MAP_FOCUS_ZOOM, {
+      map.flyTo(imageToLatLng(focusPoint.x, focusPoint.y), MAP_DEFAULT_ZOOM, {
         duration: isMobile ? 0.55 : 1.05,
         easeLinearity: 0.25,
       });
     }
   }, [focusPoint, map, isMobile]);
+
+  return null;
+};
+
+const MapSizeSync = () => {
+  const map = useMap();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncSize = () => {
+      map.invalidateSize({ pan: false, animate: false });
+    };
+
+    const rafId = window.requestAnimationFrame(syncSize);
+    const timeoutId = window.setTimeout(syncSize, 150);
+
+    map.whenReady(syncSize);
+    window.addEventListener('resize', syncSize);
+    window.visualViewport?.addEventListener('resize', syncSize);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('resize', syncSize);
+      window.visualViewport?.removeEventListener('resize', syncSize);
+    };
+  }, [map]);
+
+  return null;
+};
+
+const MapIntroAnimation = ({ isActive, onComplete }: { isActive: boolean; onComplete: () => void }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!isActive) return;
+    if (typeof window === 'undefined') {
+      onComplete();
+      return;
+    }
+
+    map.stop();
+    map.setView(MAP_CENTER, MAP_INTRO_ZOOM, { animate: false });
+    map.flyTo(MAP_CENTER, MAP_DEFAULT_ZOOM, {
+      duration: MAP_INTRO_DURATION_MS / 1000,
+      easeLinearity: 0.25,
+    });
+
+    const introTimer = window.setTimeout(() => {
+      onComplete();
+    }, MAP_INTRO_DURATION_MS + 80);
+
+    return () => {
+      window.clearTimeout(introTimer);
+    };
+  }, [isActive, map, onComplete]);
 
   return null;
 };
@@ -626,6 +684,7 @@ const ModaCenterMap = () => {
   const [showDestinationSuggestions, setShowDestinationSuggestions] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [isMapIntroActive, setIsMapIntroActive] = useState(true);
   const [routeMessage, setRouteMessage] = useState('Defina seu local atual e escolha o destino para começar.');
   const [walkerProgress, setWalkerProgress] = useState(0);
   const [walkerPosition, setWalkerPosition] = useState<[number, number] | null>(null);
@@ -750,6 +809,10 @@ const ModaCenterMap = () => {
 
     setIsActionDockExpanded(true);
   };
+
+  const handleMapIntroComplete = useCallback(() => {
+    setIsMapIntroActive(false);
+  }, []);
 
   const orderedByAccessPois = useMemo(() => {
     return [...pois].sort((a, b) => {
@@ -1012,6 +1075,52 @@ const ModaCenterMap = () => {
     if (selectedOriginId && selectedOriginId !== poi.id && !selectedDestinationId) {
       selectDestinationPoi(poi);
       buildRoute(selectedOriginId, poi.id);
+    }
+  };
+
+  const updatePoiPosition = (poiId: string, lat: number, lng: number) => {
+    if (!isAdmin) return;
+
+    const mapped = latLngToImage(lat, lng);
+    const nextX = Math.round(mapped.x);
+    const nextY = Math.round(mapped.y);
+    const nearestNode = findNearestNode(nextX, nextY, 90);
+
+    setPois((prev) =>
+      prev.map((poi) =>
+        poi.id === poiId
+          ? {
+              ...poi,
+              x: nextX,
+              y: nextY,
+              nodeId: nearestNode ?? undefined,
+            }
+          : poi,
+      ),
+    );
+
+    setEditingPoi((prev) =>
+      prev?.id === poiId
+        ? {
+            ...prev,
+            x: nextX,
+            y: nextY,
+            nodeId: nearestNode ?? undefined,
+          }
+        : prev,
+    );
+
+    if (activePoiId === poiId) {
+      setFocusPoint((prev) =>
+        prev?.id === poiId
+          ? {
+              ...prev,
+              x: nextX,
+              y: nextY,
+              nodeId: nearestNode ?? undefined,
+            }
+          : prev,
+      );
     }
   };
 
@@ -1333,7 +1442,10 @@ const ModaCenterMap = () => {
   const secondaryPoiAction = shouldPromoteSetOrigin ? handleDirectionsFromActivePoi : setActivePoiAsOrigin;
   const currentTutorialStep = tutorialSteps[tutorialStepIndex];
   const mapOverlayUrl = '/maps/mapa-visual.png';
-  const mapOverlayOpacity = isMobile ? 0.9 : 0.84;
+  const mapOverlayOpacity = isMapIntroActive ? (isMobile ? 0.2 : 0.16) : isMobile ? 0.98 : 0.94;
+  const basemapOpacity = isMapIntroActive ? 1 : 0;
+  const panelTopOffset = isMobile ? 'calc(env(safe-area-inset-top, 0px) + 118px)' : 108;
+  const adminTriggerTopOffset = isMobile ? 'calc(env(safe-area-inset-top, 0px) + 86px)' : 84;
   const mobileSheetBounds = activePoi ? getMobileSheetBounds() : null;
   const resolvedMobileSheetHeight = mobileSheetBounds
     ? clampMobileSheetHeight(mobileSheetHeight || mobileSheetBounds.defaultHeight)
@@ -1361,10 +1473,10 @@ const ModaCenterMap = () => {
           width: isAdmin ? '340px' : '0px',
           transition: 'width 0.3s ease',
           background: 'var(--color-surface-strong)',
-          borderRight: '1px solid var(--color-border)',
+          borderRight: isAdmin ? '1px solid var(--color-border)' : 'none',
           display: 'flex',
           flexDirection: 'column',
-          boxShadow: '0 6px 20px rgba(15, 23, 42, 0.12)',
+          boxShadow: isAdmin ? '0 6px 20px rgba(15, 23, 42, 0.12)' : 'none',
           zIndex: 1200,
         }}
       >
@@ -1607,6 +1719,17 @@ const ModaCenterMap = () => {
 
         {!isAdmin && (
           <div
+            className='map-brand-header'
+          >
+            <span className='map-brand-icon-shell'>
+              <img src={brandIcon} alt='Logo Gnomon' className='map-brand-icon' />
+            </span>
+            <span className='map-brand-label'>GNOMON</span>
+          </div>
+        )}
+
+        {!isAdmin && (
+          <div
             style={{
               position: 'absolute',
               left: '50%',
@@ -1621,9 +1744,11 @@ const ModaCenterMap = () => {
               padding: isActionDockExpanded ? '8px' : '6px',
               width: isActionDockExpanded
                 ? isMobile
-                  ? 'min(calc(100vw - 14px), 420px)'
-                  : 'min(460px, calc(100vw - 30px))'
-                : 'min(calc(100vw - 14px), 280px)',
+                  ? 'calc(100vw - 12px)'
+                  : 'min(500px, calc(100vw - 30px))'
+                : isMobile
+                  ? 'calc(100vw - 12px)'
+                  : 'min(400px, calc(100vw - 30px))',
             }}
             className={`map-surface-toolbar map-action-dock ${isActionDockExpanded ? 'expanded' : 'collapsed'}`}
           >
@@ -1636,13 +1761,52 @@ const ModaCenterMap = () => {
               onClick={handleActionDockClick}
               className='map-dock-handle'
               aria-label='Arrastar botoes de acao'
+              aria-expanded={isActionDockExpanded}
             >
               <span className='map-dock-handle-grab' />
-              <span className='map-dock-handle-label'>
+              <span className='map-dock-handle-title'>
                 {isActionDockExpanded
                   ? 'Arraste para baixo para esconder'
                   : 'Arraste para cima para abrir acoes'}
               </span>
+              {!isActionDockExpanded && (
+                <span className='map-dock-quick-strip' aria-hidden='true'>
+                  <span className={`map-dock-quick-item ${isPinsPanelOpen ? 'active' : ''}`}>
+                    <span className='map-dock-quick-icon'>
+                      <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                        <path d='M4 9L12 3L20 9V19A2 2 0 0 1 18 21H6A2 2 0 0 1 4 19V9Z' />
+                        <path d='M9 21V13H15V21' />
+                      </svg>
+                    </span>
+                    <span className='map-dock-quick-text'>Pins</span>
+                  </span>
+                  <span className={`map-dock-quick-item ${isRoutePanelOpen ? 'active' : ''}`}>
+                    <span className='map-dock-quick-icon'>
+                      <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                        <circle cx='7' cy='17' r='2.2' />
+                        <circle cx='17' cy='7' r='2.2' />
+                        <path d='M9.4 15.6L14.6 10.4' />
+                        <path d='M11.5 6.3H7.8A2.8 2.8 0 0 0 5 9.1V12.7' />
+                        <path d='M12.5 17.7H16.2A2.8 2.8 0 0 0 19 14.9V11.3' />
+                      </svg>
+                    </span>
+                    <span className='map-dock-quick-text'>Rota</span>
+                  </span>
+                  {!isPresentationMode && (
+                    <span className='map-dock-quick-item'>
+                      <span className='map-dock-quick-icon'>
+                        <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                          <rect x='4' y='4' width='7' height='7' rx='1.5' />
+                          <rect x='13' y='4' width='7' height='7' rx='1.5' />
+                          <rect x='4' y='13' width='7' height='7' rx='1.5' />
+                          <rect x='13' y='13' width='7' height='7' rx='1.5' />
+                        </svg>
+                      </span>
+                      <span className='map-dock-quick-text'>Menu</span>
+                    </span>
+                  )}
+                </span>
+              )}
             </button>
 
             {isActionDockExpanded && (
@@ -1685,7 +1849,7 @@ const ModaCenterMap = () => {
           <div
             style={{
               position: 'absolute',
-              top: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 108px)' : 66,
+              top: panelTopOffset,
               left: isMobile ? 8 : 70,
               right: isMobile ? 8 : 'auto',
               zIndex: 1110,
@@ -1816,7 +1980,7 @@ const ModaCenterMap = () => {
           <div
             style={{
               position: 'absolute',
-              top: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 108px)' : 'auto',
+              top: isMobile ? panelTopOffset : 'auto',
               left: isMobile ? 8 : 70,
               right: isMobile ? 8 : 'auto',
               bottom: isMobile ? 'auto' : 18,
@@ -2250,7 +2414,7 @@ const ModaCenterMap = () => {
         {!isPresentationMode && !isAdmin && (
           <button
             onClick={() => setIsAdmin(true)}
-            style={{ top: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 10px)' : 14 }}
+            style={{ top: adminTriggerTopOffset }}
             className='map-admin-trigger'
             title='Abrir painel admin'
           >
@@ -2260,40 +2424,41 @@ const ModaCenterMap = () => {
 
         <MapContainer
           center={MAP_CENTER}
-          zoom={isMobile ? 17.8 : MAP_DEFAULT_ZOOM}
-          minZoom={17}
+          zoom={MAP_INTRO_ZOOM}
+          minZoom={MAP_MIN_ZOOM}
           maxZoom={MAP_MAX_ZOOM}
-          maxBounds={mapBounds}
-          maxBoundsViscosity={LOCK_MAP_POSITION ? 1 : 0.85}
+          maxBounds={undefined}
+          maxBoundsViscosity={0}
           style={{ height: '100%', width: '100%' }}
-          zoomControl={true}
+          zoomControl={false}
           scrollWheelZoom={true}
           doubleClickZoom={true}
           touchZoom={true}
-          boxZoom={true}
+          boxZoom={false}
           keyboard={false}
-          dragging={!LOCK_MAP_POSITION}
+          dragging={true}
+          zoomSnap={0.1}
+          zoomDelta={0.1}
           preferCanvas={false}
           zoomAnimation={!isMobile}
           markerZoomAnimation={!isMobile}
           fadeAnimation={!isMobile}
         >
-          <Pane
-            name='rotated-basemap'
-            style={{
-              zIndex: 150,
-              transform: `rotate(${BASEMAP_ROTATION_DEG}deg) scale(${BASEMAP_ROTATION_SCALE})`,
-              transformOrigin: '50% 50%',
-            }}
-          >
-            <TileLayer
-              url='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-              attribution='&copy; OpenStreetMap contributors'
-            />
-          </Pane>
+          <TileLayer
+            url={BASEMAP_TILE_URL}
+            attribution={BASEMAP_TILE_ATTRIBUTION}
+            className='basemap-street-layer'
+            opacity={basemapOpacity}
+            keepBuffer={8}
+            updateWhenIdle={true}
+            updateWhenZooming={false}
+            updateInterval={140}
+          />
           <ImageOverlay url={mapOverlayUrl} bounds={mapBounds} opacity={mapOverlayOpacity} />
           <MapEvents />
-          {!LOCK_MAP_POSITION && <MapController focusPoint={focusPoint} isMobile={isMobile} />}
+          <MapSizeSync />
+          <MapIntroAnimation isActive={isMapIntroActive} onComplete={handleMapIntroComplete} />
+          <MapController focusPoint={focusPoint} isMobile={isMobile} />
 
           {routeLatLngPoints.length > 1 && (
             <>
@@ -2354,7 +2519,16 @@ const ModaCenterMap = () => {
                 key={poi.id}
                 position={imageToLatLng(poi.x, poi.y)}
                 icon={getMarkerIcon(poi, isActive)}
-                eventHandlers={{ click: () => handleMarkerSelection(poi) }}
+                draggable={isAdmin}
+                eventHandlers={{
+                  click: () => handleMarkerSelection(poi),
+                  dragend: (event) => {
+                    if (!isAdmin) return;
+                    const marker = event.target as L.Marker;
+                    const latLng = marker.getLatLng();
+                    updatePoiPosition(poi.id, latLng.lat, latLng.lng);
+                  },
+                }}
               >
                 <Popup
                   autoPan={false}

@@ -1,5 +1,5 @@
 import rawGraph from '../data/navGraph.json';
-import { COORDINATE_SCALE_X, COORDINATE_SCALE_Y } from '../config/mapConfig';
+import { MAP_PIXEL_HEIGHT, MAP_PIXEL_WIDTH } from '../config/mapConfig';
 
 type GraphNode = {
   x: number;
@@ -9,13 +9,31 @@ type GraphNode = {
 
 type Graph = Record<string, GraphNode>;
 
+const inferSourceDimensions = (source: Graph) => {
+  const nodes = Object.values(source);
+  if (nodes.length === 0) {
+    return { width: MAP_PIXEL_WIDTH, height: MAP_PIXEL_HEIGHT };
+  }
+
+  const maxX = nodes.reduce((acc, node) => Math.max(acc, node.x), 0);
+  const maxY = nodes.reduce((acc, node) => Math.max(acc, node.y), 0);
+
+  return {
+    width: Math.max(1, Math.round(maxX) + 1),
+    height: Math.max(1, Math.round(maxY) + 1),
+  };
+};
+
 const scaleGraph = (source: Graph): Graph => {
+  const sourceSize = inferSourceDimensions(source);
+  const scaleX = MAP_PIXEL_WIDTH / sourceSize.width;
+  const scaleY = MAP_PIXEL_HEIGHT / sourceSize.height;
   const result: Graph = {};
 
   Object.entries(source).forEach(([id, node]) => {
     result[id] = {
-      x: Math.round(node.x * COORDINATE_SCALE_X),
-      y: Math.round(node.y * COORDINATE_SCALE_Y),
+      x: Math.round(node.x * scaleX),
+      y: Math.round(node.y * scaleY),
       neighbors: node.neighbors,
     };
   });

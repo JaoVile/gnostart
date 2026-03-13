@@ -6,7 +6,7 @@ const ModaCenterMap = lazy(() => import('./components/Maps/Gnomon'));
 function App() {
   useEffect(() => {
     const mapPreload = new Image();
-    mapPreload.src = '/maps/mapa-visual.jpeg';
+    mapPreload.src = '/maps/mapa-visual.png';
   }, []);
 
   return (
@@ -19,5 +19,4 @@ function App() {
 }
 
 export default App;
-
 

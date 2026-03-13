@@ -5,8 +5,9 @@ const Jimp = require('jimp');
 const INPUT_IMAGE = process.env.MAP_LOGIC_IMAGE || 'mapa-logica.png';
 const OUTPUT_FILE = process.env.MAP_GRAPH_OUTPUT || '../frontend/src/data/navGraph.json';
 const GRID_SIZE = Number.parseInt(process.env.GRID_SIZE || '15', 10);
-const WALKABLE_MODE = (process.env.WALKABLE_MODE || 'light').trim().toLowerCase();
-const COLOR_THRESHOLD = Number.parseInt(process.env.COLOR_THRESHOLD || '200', 10);
+const WALKABLE_MODE = (process.env.WALKABLE_MODE || 'white-only').trim().toLowerCase();
+const COLOR_THRESHOLD = Number.parseInt(process.env.COLOR_THRESHOLD || '245', 10);
+const BLOCKED_THRESHOLD = Number.parseInt(process.env.BLOCKED_THRESHOLD || '55', 10);
 
 const resolveFromScriptsDir = (targetPath) =>
   path.isAbsolute(targetPath) ? targetPath : path.resolve(__dirname, targetPath);
@@ -22,6 +23,12 @@ const validateInputExtension = (inputPath) => {
 
 const isWalkablePixel = (rgba) => {
   const avg = (rgba.r + rgba.g + rgba.b) / 3;
+  if (avg <= BLOCKED_THRESHOLD) return false;
+
+  if (WALKABLE_MODE === 'white-only') {
+    return rgba.r >= COLOR_THRESHOLD && rgba.g >= COLOR_THRESHOLD && rgba.b >= COLOR_THRESHOLD;
+  }
+
   if (WALKABLE_MODE === 'dark') {
     return avg <= COLOR_THRESHOLD;
   }
@@ -36,8 +43,8 @@ async function generateGraph() {
     throw new Error('GRID_SIZE precisa ser um inteiro positivo.');
   }
 
-  if (!['light', 'dark'].includes(WALKABLE_MODE)) {
-    throw new Error("WALKABLE_MODE invalido. Use 'light' (padrao) ou 'dark'.");
+  if (!['white-only', 'light', 'dark'].includes(WALKABLE_MODE)) {
+    throw new Error("WALKABLE_MODE invalido. Use 'white-only' (padrao), 'light' ou 'dark'.");
   }
 
   validateInputExtension(inputPath);
@@ -48,7 +55,7 @@ async function generateGraph() {
 
   console.log(`Lendo mapa logico: ${inputPath}`);
   console.log(
-    `Modo caminhavel: ${WALKABLE_MODE} | limiar: ${COLOR_THRESHOLD} | grid: ${GRID_SIZE}px`,
+    `Modo caminhavel: ${WALKABLE_MODE} | limiar: ${COLOR_THRESHOLD} | bloqueio<=${BLOCKED_THRESHOLD} | grid: ${GRID_SIZE}px`,
   );
 
   const image = await Jimp.read(inputPath);

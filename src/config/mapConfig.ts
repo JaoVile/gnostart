@@ -4,18 +4,8 @@ export const LEGACY_COORDINATE_HEIGHT = 1280;
 export const MAP_PIXEL_WIDTH = 1527;
 export const MAP_PIXEL_HEIGHT = 912;
 
-const MAP_BASE_CENTER: [number, number] = [-8.282769956514597, -35.96594654609873];
-
-// Ajuste fino de posicionamento do overlay.
-// LAT: positivo sobe (norte), negativo desce (sul)
-// LNG: positivo vai para direita (leste), negativo vai para esquerda (oeste)
-const MAP_OFFSET_LAT = 0.0002;
-const MAP_OFFSET_LNG = 0.0017;
-
-export const MAP_CENTER: [number, number] = [
-  MAP_BASE_CENTER[0] + MAP_OFFSET_LAT,
-  MAP_BASE_CENTER[1] + MAP_OFFSET_LNG,
-];
+// Coordenada de referencia informada para o Patio do Porto Digital (Caruaru).
+export const MAP_CENTER: [number, number] = [-8.282850901745611, -35.965868293929084];
 
 // Ajuste final para o Armazem da Criatividade, mantendo enquadramento horizontal.
 // Menor = overlay menor; maior = overlay maior.
