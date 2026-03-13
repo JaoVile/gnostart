@@ -2,6 +2,7 @@ import {
   ImageOverlay,
   MapContainer,
   Marker,
+  Pane,
   Polyline,
   Popup,
   TileLayer,
@@ -44,6 +45,8 @@ interface PointData {
   descricao?: string;
   imagemUrl?: string;
   contato?: string;
+  corDestaque?: string;
+  selo?: string;
   nodeId?: string;
 }
 
@@ -68,38 +71,178 @@ const poiGlyphs = {
     "<svg viewBox='0 0 24 24' width='16' height='16' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M3 8.9L5.1 4H18.9L21 8.9' stroke='white' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/><path d='M4.1 8.9V20H19.9V8.9' stroke='white' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/><path d='M9 20V14.2H15V20' stroke='white' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/></svg>",
 };
 
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const hslToHex = (h: number, s: number, l: number) => {
+  const hue = ((h % 360) + 360) % 360;
+  const saturation = Math.max(0, Math.min(100, s)) / 100;
+  const lightness = Math.max(0, Math.min(100, l)) / 100;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = lightness - chroma / 2;
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hue < 60) {
+    r = chroma;
+    g = x;
+  } else if (hue < 120) {
+    r = x;
+    g = chroma;
+  } else if (hue < 180) {
+    g = chroma;
+    b = x;
+  } else if (hue < 240) {
+    g = x;
+    b = chroma;
+  } else if (hue < 300) {
+    r = x;
+    b = chroma;
+  } else {
+    r = chroma;
+    b = x;
+  }
+
+  const toHex = (value: number) => {
+    const rounded = Math.round((value + m) * 255);
+    const clamped = Math.max(0, Math.min(255, rounded));
+    return clamped.toString(16).padStart(2, '0');
+  };
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+};
+
+const hexToRgb = (value: string) => {
+  const sanitized = value.replace('#', '').trim();
+  if (!/^[0-9a-f]{6}$/i.test(sanitized)) return null;
+  return {
+    r: Number.parseInt(sanitized.slice(0, 2), 16),
+    g: Number.parseInt(sanitized.slice(2, 4), 16),
+    b: Number.parseInt(sanitized.slice(4, 6), 16),
+  };
+};
+
+const rgbToHex = (r: number, g: number, b: number) => {
+  const toHex = (value: number) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+};
+
+const mixColors = (baseHex: string, targetHex: string, weight: number) => {
+  const base = hexToRgb(baseHex);
+  const target = hexToRgb(targetHex);
+  if (!base || !target) return baseHex;
+  const clampedWeight = Math.max(0, Math.min(1, weight));
+  const mix = (from: number, to: number) => from * (1 - clampedWeight) + to * clampedWeight;
+  return rgbToHex(mix(base.r, target.r), mix(base.g, target.g), mix(base.b, target.b));
+};
+
+const normalizeHexColor = (value?: string) => {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const short = /^#([0-9a-f]{3})$/i.exec(trimmed);
+  if (short) {
+    const [, raw] = short;
+    return `#${raw[0]}${raw[0]}${raw[1]}${raw[1]}${raw[2]}${raw[2]}`.toLowerCase();
+  }
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed.toLowerCase();
+  return undefined;
+};
+
+const hashString = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+};
+
+const getHashedAccentColor = (poi: PointData) => {
+  const typeHueMap: Record<PoiType, number> = {
+    atividade: 24,
+    servico: 265,
+    banheiro: 198,
+    entrada: 135,
+  };
+  const seed = hashString(`${poi.id}:${poi.nome}:${poi.tipo}`);
+  const hue = (typeHueMap[poi.tipo] + (seed % 58) - 29 + 360) % 360;
+  const saturation = 70 + (seed % 14);
+  const lightness = 44 + (seed % 9);
+  return hslToHex(hue, saturation, lightness);
+};
+
+const normalizeBadgeText = (value?: string) => {
+  if (!value) return undefined;
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, 3).toUpperCase();
+};
+
+const getPoiBadgeText = (poi: PointData) => {
+  const customBadge = normalizeBadgeText(poi.selo);
+  if (customBadge) return customBadge;
+  const fallback = poi.nome.trim().charAt(0).toUpperCase();
+  return fallback || 'P';
+};
+
+const getPoiAccentColor = (poi: PointData) => normalizeHexColor(poi.corDestaque) ?? getHashedAccentColor(poi);
+
+const getPoiPalette = (poi: PointData) => {
+  const accent = getPoiAccentColor(poi);
+  return {
+    accent,
+    from: mixColors(accent, '#ffffff', 0.17),
+    to: mixColors(accent, '#111827', 0.2),
+  };
+};
+
 const createPoiIcon = (
   type: PoiType,
   fromColor: string,
   toColor: string,
+  badgeColor: string,
+  badgeText: string,
   size = 34,
   isHighlighted = false,
 ) =>
   new L.DivIcon({
-    html: `<div style='position:relative; width:${size}px; height:${size}px; display:flex; align-items:center; justify-content:center; border-radius:999px; background:linear-gradient(145deg, ${fromColor}, ${toColor}); border:${isHighlighted ? 3 : 2}px solid rgba(255,255,255,0.95); box-shadow:${isHighlighted ? '0 12px 24px rgba(15,23,42,0.42)' : '0 5px 12px rgba(15,23,42,0.3)'}; transform:${isHighlighted ? 'scale(1.08)' : 'scale(1)'};'><div style='position:absolute; z-index:0; bottom:-5px; left:50%; width:${Math.max(10, Math.round(size * 0.34))}px; height:${Math.max(10, Math.round(size * 0.34))}px; background:${toColor}; transform:translateX(-50%) rotate(45deg); border-radius:0 0 4px 0; opacity:0.9;'></div><div style='position:relative; z-index:1; width:${Math.max(18, Math.round(size * 0.58))}px; height:${Math.max(18, Math.round(size * 0.58))}px; display:flex; align-items:center; justify-content:center; border-radius:999px; background:rgba(255,255,255,0.14);'>${poiGlyphs[type]}</div></div>`,
+    html: `<div style='position:relative; width:${size}px; height:${size}px; display:flex; align-items:center; justify-content:center; border-radius:999px; background:linear-gradient(145deg, ${fromColor}, ${toColor}); border:${isHighlighted ? 3 : 2}px solid rgba(255,255,255,0.95); box-shadow:${isHighlighted ? '0 12px 24px rgba(15,23,42,0.42)' : '0 5px 12px rgba(15,23,42,0.3)'}; transform:${isHighlighted ? 'scale(1.08)' : 'scale(1)'};'><div style='position:absolute; z-index:0; bottom:-5px; left:50%; width:${Math.max(10, Math.round(size * 0.34))}px; height:${Math.max(10, Math.round(size * 0.34))}px; background:${toColor}; transform:translateX(-50%) rotate(45deg); border-radius:0 0 4px 0; opacity:0.9;'></div><div style='position:relative; z-index:1; width:${Math.max(18, Math.round(size * 0.58))}px; height:${Math.max(18, Math.round(size * 0.58))}px; display:flex; align-items:center; justify-content:center; border-radius:999px; background:rgba(255,255,255,0.14);'>${poiGlyphs[type]}</div><span style='position:absolute; top:${isHighlighted ? -8 : -7}px; right:${isHighlighted ? -10 : -8}px; min-width:${Math.max(18, Math.round(size * 0.45))}px; height:${Math.max(18, Math.round(size * 0.45))}px; padding:0 4px; display:flex; align-items:center; justify-content:center; border-radius:999px; background:${badgeColor}; color:#ffffff; border:2px solid rgba(255,255,255,0.95); font-size:${Math.max(8, Math.round(size * 0.22))}px; font-weight:800; letter-spacing:0.02em; line-height:1;'>${escapeHtml(
+      badgeText,
+    )}</span></div>`,
     className: 'custom-poi-icon',
     iconSize: [size, size + 8],
     iconAnchor: [size / 2, Math.round(size * 0.88)],
     popupAnchor: [0, -Math.round(size * 0.68)],
   });
 
-const poiIcons = {
-  entrada: {
-    normal: createPoiIcon('entrada', '#34d399', '#16a34a', 36),
-    active: createPoiIcon('entrada', '#22c55e', '#15803d', 46, true),
-  },
-  banheiro: {
-    normal: createPoiIcon('banheiro', '#38bdf8', '#0284c7', 36),
-    active: createPoiIcon('banheiro', '#0ea5e9', '#0369a1', 46, true),
-  },
-  atividade: {
-    normal: createPoiIcon('atividade', '#f97316', '#c2410c', 36),
-    active: createPoiIcon('atividade', '#fb923c', '#9a3412', 46, true),
-  },
-  servico: {
-    normal: createPoiIcon('servico', '#8b5cf6', '#6d28d9', 36),
-    active: createPoiIcon('servico', '#7c3aed', '#5b21b6', 46, true),
-  },
+const poiIconCache = new Map<string, L.DivIcon>();
+
+const getPoiIcon = (poi: PointData, isHighlighted = false) => {
+  const palette = getPoiPalette(poi);
+  const badgeText = getPoiBadgeText(poi);
+  const accentForBadge = mixColors(palette.accent, '#020617', 0.14);
+  const size = isHighlighted ? 46 : 36;
+  const cacheKey = `${poi.id}|${poi.tipo}|${palette.from}|${palette.to}|${accentForBadge}|${badgeText}|${size}|${isHighlighted ? 1 : 0}`;
+  const cached = poiIconCache.get(cacheKey);
+  if (cached) return cached;
+
+  const icon = createPoiIcon(
+    poi.tipo,
+    palette.from,
+    palette.to,
+    accentForBadge,
+    badgeText,
+    size,
+    isHighlighted,
+  );
+  poiIconCache.set(cacheKey, icon);
+  return icon;
 };
 
 const stateIcons = {
@@ -113,6 +256,9 @@ const MAP_HEIGHT = MAP_PIXEL_HEIGHT;
 const MAP_DEFAULT_ZOOM = 18;
 const MAP_FOCUS_ZOOM = 18.6;
 const MAP_MAX_ZOOM = 20.5;
+const LOCK_MAP_POSITION = true;
+const BASEMAP_ROTATION_DEG = -15;
+const BASEMAP_ROTATION_SCALE = 1.45;
 const mapBounds = new L.LatLngBounds([MAP_SOUTH, MAP_WEST], [MAP_NORTH, MAP_EAST]);
 const AVERAGE_WALKING_SPEED_MPS = 1.4;
 const WALKER_PROGRESS_UPDATE_MS = 250;
@@ -213,12 +359,14 @@ const getPointAlongPath = (positions: [number, number][], progress: number): [nu
   return positions[positions.length - 1];
 };
 const MAX_DEFAULT_VISIBLE_PINS = 20;
-const POI_ACCESS_STORAGE_KEY = 'gnocenter.poiAccessCount';
-const TUTORIAL_STORAGE_KEY = 'gnocenter.mapTutorialSeen';
+const POI_ACCESS_STORAGE_KEY = 'gnostart.poiAccessCount';
+const TUTORIAL_STORAGE_KEY = 'gnostart.mapTutorialSeen';
 const MOBILE_MEDIA_QUERY = '(max-width: 900px)';
 const PRESENTATION_MODE_QUERY_KEY = 'modo';
 const PRESENTATION_MODE_DEFAULT = true;
 const POI_DATA_EXPORT_FILENAME = 'locais_evento_social.json';
+const EVENT_NAME = 'GNOSTART';
+const EVENT_LABEL = `Evento ${EVENT_NAME}`;
 
 const getPresentationModeFromQuery = () => {
   if (typeof window === 'undefined') return PRESENTATION_MODE_DEFAULT;
@@ -256,7 +404,7 @@ const poiTypeSingularLabels: Record<PoiType, string> = {
 const tutorialSteps = [
   {
     title: 'Bem-vindo(a) ao mapa',
-    text: 'Use os botoes Pins e Rota para abrir apenas o que voce precisa durante o evento.',
+    text: 'Arraste o botao de acoes para cima e abra Pins ou Rota quando precisar.',
   },
   {
     title: 'Encontre os pontos do evento',
@@ -280,7 +428,9 @@ const rawInitialPois: PointData[] = [
     x: 752,
     y: 834,
     descricao: 'Acesso principal do evento social.',
-    imagemUrl: '/images/pois/indicadores/ENTRADASUL.jpg',
+    imagemUrl: '/images/pois/indicadores/entrada.svg',
+    corDestaque: '#16a34a',
+    selo: 'EP',
   },
   {
     id: 'recepcao_credenciamento',
@@ -291,6 +441,8 @@ const rawInitialPois: PointData[] = [
     descricao: 'Retirada de pulseiras e apoio inicial.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
     contato: '(81) 99999-1010',
+    corDestaque: '#2563eb',
+    selo: 'RC',
   },
   {
     id: 'palco_principal',
@@ -300,6 +452,8 @@ const rawInitialPois: PointData[] = [
     y: 449,
     descricao: 'Programacao principal do evento.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
+    corDestaque: '#ea580c',
+    selo: 'PAL',
   },
   {
     id: 'lounge_convivio',
@@ -309,6 +463,8 @@ const rawInitialPois: PointData[] = [
     y: 524,
     descricao: 'Espaco para descanso e networking.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
+    corDestaque: '#b45309',
+    selo: 'LNG',
   },
   {
     id: 'espaco_fotos',
@@ -318,6 +474,8 @@ const rawInitialPois: PointData[] = [
     y: 502,
     descricao: 'Area cenografica para fotos.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
+    corDestaque: '#db2777',
+    selo: 'FTO',
   },
   {
     id: 'area_alimentacao',
@@ -327,6 +485,8 @@ const rawInitialPois: PointData[] = [
     y: 266,
     descricao: 'Ponto de alimentacao e bebidas.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
+    corDestaque: '#0d9488',
+    selo: 'ALI',
   },
   {
     id: 'posto_apoio',
@@ -337,6 +497,8 @@ const rawInitialPois: PointData[] = [
     descricao: 'Informacoes e apoio ao participante.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
     contato: '(81) 99999-2020',
+    corDestaque: '#4338ca',
+    selo: 'SOS',
   },
   {
     id: 'banheiro_social',
@@ -345,7 +507,9 @@ const rawInitialPois: PointData[] = [
     x: 1193,
     y: 360,
     descricao: 'Banheiro de apoio ao publico.',
-    imagemUrl: '/images/pois/indicadores/BANHEIRO.JPG',
+    imagemUrl: '/images/pois/indicadores/banheiro.svg',
+    corDestaque: '#0284c7',
+    selo: 'WC',
   },
   {
     id: 'saida_lateral',
@@ -354,7 +518,9 @@ const rawInitialPois: PointData[] = [
     x: 1382,
     y: 131,
     descricao: 'Saida secundaria para fluxo de evacuacao.',
-    imagemUrl: '/images/pois/indicadores/ENTRADALESTE.jpg',
+    imagemUrl: '/images/pois/indicadores/entrada.svg',
+    corDestaque: '#15803d',
+    selo: 'S2',
   },
 ];
 
@@ -434,10 +600,9 @@ const ModaCenterMap = () => {
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia(MOBILE_MEDIA_QUERY).matches : false,
   );
-  const [isPinsPanelOpen, setIsPinsPanelOpen] = useState(() =>
-    typeof window !== 'undefined' ? !window.matchMedia(MOBILE_MEDIA_QUERY).matches : true,
-  );
+  const [isPinsPanelOpen, setIsPinsPanelOpen] = useState(false);
   const [isRoutePanelOpen, setIsRoutePanelOpen] = useState(false);
+  const [isActionDockExpanded, setIsActionDockExpanded] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [pois, setPois] = useState<PointData[]>(() => rawInitialPois.map(attachNearestNode));
   const [rota, setRota] = useState<number[][] | null>(null);
@@ -459,11 +624,7 @@ const ModaCenterMap = () => {
   const [destinationQuery, setDestinationQuery] = useState('');
   const [showOriginSuggestions, setShowOriginSuggestions] = useState(false);
   const [showDestinationSuggestions, setShowDestinationSuggestions] = useState(false);
-  const [isTutorialOpen, setIsTutorialOpen] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    if (getPresentationModeFromQuery()) return false;
-    return window.localStorage.getItem(TUTORIAL_STORAGE_KEY) !== '1';
-  });
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [routeMessage, setRouteMessage] = useState('Defina seu local atual e escolha o destino para começar.');
   const [walkerProgress, setWalkerProgress] = useState(0);
@@ -474,6 +635,9 @@ const ModaCenterMap = () => {
   const mobileSheetHeightRef = useRef(0);
   const sheetDragStartYRef = useRef<number | null>(null);
   const sheetDragStartHeightRef = useRef(0);
+  const actionDockDragStartYRef = useRef<number | null>(null);
+  const actionDockDragDistanceRef = useRef(0);
+  const suppressActionDockClickRef = useRef(false);
 
   useEffect(() => {
     if (!isPresentationMode || !isAdmin) return;
@@ -512,11 +676,17 @@ const ModaCenterMap = () => {
   const getMobileSheetBounds = useCallback(() => {
     const viewportHeight =
       typeof window !== 'undefined' ? Math.round(window.visualViewport?.height ?? window.innerHeight) : 780;
-    const minHeight = Math.max(164, Math.round(viewportHeight * 0.24));
-    const maxHeight = Math.max(minHeight + 90, Math.round(viewportHeight * 0.7));
-    const defaultHeight = Math.max(minHeight, Math.min(maxHeight, Math.round(viewportHeight * 0.32)));
+    const minHeight = isMobile
+      ? Math.max(164, Math.round(viewportHeight * 0.24))
+      : Math.max(210, Math.round(viewportHeight * 0.26));
+    const maxHeight = isMobile
+      ? Math.max(minHeight + 90, Math.round(viewportHeight * 0.7))
+      : Math.max(minHeight + 130, Math.round(viewportHeight * 0.8));
+    const defaultHeight = isMobile
+      ? Math.max(minHeight, Math.min(maxHeight, Math.round(viewportHeight * 0.32)))
+      : Math.max(minHeight, Math.min(maxHeight, Math.round(viewportHeight * 0.38)));
     return { minHeight, maxHeight, defaultHeight };
-  }, []);
+  }, [isMobile]);
 
   const clampMobileSheetHeight = useCallback((value: number) => {
     const bounds = getMobileSheetBounds();
@@ -524,7 +694,6 @@ const ModaCenterMap = () => {
   }, [getMobileSheetBounds]);
 
   const handleMobileSheetPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!isMobile) return;
     event.preventDefault();
 
     const bounds = getMobileSheetBounds();
@@ -533,6 +702,53 @@ const ModaCenterMap = () => {
     sheetDragStartHeightRef.current = currentHeight;
     setMobileSheetHeight(currentHeight);
     setIsMobileSheetDragging(true);
+  };
+
+  const handleActionDockPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    actionDockDragStartYRef.current = event.clientY;
+    actionDockDragDistanceRef.current = 0;
+    suppressActionDockClickRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleActionDockPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (actionDockDragStartYRef.current === null) return;
+    actionDockDragDistanceRef.current = actionDockDragStartYRef.current - event.clientY;
+  };
+
+  const finalizeActionDockDrag = () => {
+    if (actionDockDragStartYRef.current === null) return;
+    const delta = actionDockDragDistanceRef.current;
+    actionDockDragStartYRef.current = null;
+    actionDockDragDistanceRef.current = 0;
+
+    if (Math.abs(delta) <= 8) return;
+
+    suppressActionDockClickRef.current = true;
+    if (delta > 0) {
+      setIsActionDockExpanded(true);
+    } else {
+      setIsActionDockExpanded(false);
+      setIsPinsPanelOpen(false);
+      setIsRoutePanelOpen(false);
+    }
+  };
+
+  const handleActionDockClick = () => {
+    if (suppressActionDockClickRef.current) {
+      suppressActionDockClickRef.current = false;
+      return;
+    }
+
+    if (isActionDockExpanded) {
+      setIsActionDockExpanded(false);
+      setIsPinsPanelOpen(false);
+      setIsRoutePanelOpen(false);
+      return;
+    }
+
+    setIsActionDockExpanded(true);
   };
 
   const orderedByAccessPois = useMemo(() => {
@@ -819,6 +1035,8 @@ const ModaCenterMap = () => {
           descricao: '',
           imagemUrl: defaultPoiImages.atividade,
           contato: '',
+          corDestaque: '',
+          selo: '',
         });
       },
     });
@@ -859,6 +1077,8 @@ const ModaCenterMap = () => {
       descricao: editingPoi.descricao?.trim() || undefined,
       imagemUrl: editingPoi.imagemUrl?.trim() || defaultPoiImages[editingPoi.tipo],
       contato: normalizeContact(editingPoi.contato) || undefined,
+      corDestaque: normalizeHexColor(editingPoi.corDestaque),
+      selo: normalizeBadgeText(editingPoi.selo),
       nodeId: nearestNode,
     };
 
@@ -981,16 +1201,16 @@ const ModaCenterMap = () => {
   }, [mobileSheetHeight]);
 
   useEffect(() => {
-    if (!isMobile || !activePoiId) {
+    if (!activePoiId) {
       setMobileSheetHeight(0);
       return;
     }
     const { defaultHeight } = getMobileSheetBounds();
     setMobileSheetHeight(defaultHeight);
-  }, [isMobile, activePoiId, getMobileSheetBounds]);
+  }, [activePoiId, getMobileSheetBounds]);
 
   useEffect(() => {
-    if (!isMobile || !activePoiId || typeof window === 'undefined') return;
+    if (!activePoiId || typeof window === 'undefined') return;
 
     const syncMobileSheetSize = () => {
       const { defaultHeight } = getMobileSheetBounds();
@@ -1005,7 +1225,7 @@ const ModaCenterMap = () => {
       window.removeEventListener('resize', syncMobileSheetSize);
       window.visualViewport?.removeEventListener('resize', syncMobileSheetSize);
     };
-  }, [isMobile, activePoiId, clampMobileSheetHeight, getMobileSheetBounds]);
+  }, [activePoiId, clampMobileSheetHeight, getMobileSheetBounds]);
 
   useEffect(() => {
     if (!isMobileSheetDragging || typeof window === 'undefined') return;
@@ -1052,13 +1272,9 @@ const ModaCenterMap = () => {
   }, []);
 
   useEffect(() => {
-    if (isMobile) {
-      setIsPinsPanelOpen(false);
-      setIsRoutePanelOpen(false);
-      return;
-    }
-
-    setIsPinsPanelOpen(true);
+    setIsPinsPanelOpen(false);
+    setIsRoutePanelOpen(false);
+    setIsActionDockExpanded(false);
   }, [isMobile]);
 
   useEffect(() => {
@@ -1091,12 +1307,14 @@ const ModaCenterMap = () => {
     if (!isAdmin) {
       if (poi.id === selectedOriginId) return stateIcons.origem;
       if (poi.id === selectedDestinationId) return stateIcons.destino;
-      if (isActive) return poiIcons[poi.tipo].active;
+      if (isActive) return getPoiIcon(poi, true);
     }
-    return poiIcons[poi.tipo].normal;
+    return getPoiIcon(poi, false);
   };
 
   const activeContactLink = activePoi ? toContactLink(activePoi.contato) : null;
+  const activePoiAccentColor = activePoi ? getPoiAccentColor(activePoi) : '#1d4ed8';
+  const activePoiBadgeText = activePoi ? getPoiBadgeText(activePoi) : 'P';
   const activeGalleryImages = activePoi ? getPoiGalleryImages(activePoi) : [];
   const activePanelGalleryImages = isMobile
     ? activeGalleryImages.slice(0, 1)
@@ -1114,13 +1332,18 @@ const ModaCenterMap = () => {
   const primaryPoiAction = shouldPromoteSetOrigin ? setActivePoiAsOrigin : handleDirectionsFromActivePoi;
   const secondaryPoiAction = shouldPromoteSetOrigin ? handleDirectionsFromActivePoi : setActivePoiAsOrigin;
   const currentTutorialStep = tutorialSteps[tutorialStepIndex];
-  const mapOverlayUrl = '/maps/mapa-visual.jpeg';
+  const mapOverlayUrl = '/maps/mapa-visual.png';
   const mapOverlayOpacity = isMobile ? 0.9 : 0.84;
-  const mobileSheetBounds = isMobile ? getMobileSheetBounds() : null;
-  const resolvedMobileSheetHeight =
-    isMobile && mobileSheetBounds
-      ? clampMobileSheetHeight(mobileSheetHeight || mobileSheetBounds.defaultHeight)
-      : 0;
+  const mobileSheetBounds = activePoi ? getMobileSheetBounds() : null;
+  const resolvedMobileSheetHeight = mobileSheetBounds
+    ? clampMobileSheetHeight(mobileSheetHeight || mobileSheetBounds.defaultHeight)
+    : 0;
+  const editingAccentColorPreview = normalizeHexColor(editingPoi?.corDestaque) ?? '#1d4ed8';
+  const hasInvalidEditingAccentColor = Boolean(
+    editingPoi?.corDestaque?.trim() && !normalizeHexColor(editingPoi.corDestaque),
+  );
+  const editingBadgePreview =
+    normalizeBadgeText(editingPoi?.selo) ?? editingPoi?.nome?.trim().charAt(0).toUpperCase() ?? 'P';
 
   return (
     <div
@@ -1173,7 +1396,31 @@ const ModaCenterMap = () => {
                     cursor: 'pointer',
                   }}
                 >
-                  <div style={{ fontWeight: 700, fontSize: '14px' }}>{poi.nome}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span
+                      style={{
+                        minWidth: 24,
+                        height: 24,
+                        padding: '0 6px',
+                        borderRadius: 999,
+                        background: getPoiAccentColor(poi),
+                        color: '#ffffff',
+                        border: '1px solid rgba(255,255,255,0.88)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 10,
+                        fontWeight: 800,
+                        letterSpacing: '0.03em',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {getPoiBadgeText(poi)}
+                    </span>
+                    <div style={{ fontWeight: 700, fontSize: '14px', minWidth: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                      {poi.nome}
+                    </div>
+                  </div>
                   <div style={{ fontSize: '11px', color: '#5f6c7a', marginTop: '2px' }}>
                     {poi.tipo.toUpperCase()} {poi.nodeId ? '| conectado' : '| sem rota'}
                   </div>
@@ -1278,6 +1525,62 @@ const ModaCenterMap = () => {
               placeholder='Telefone, e-mail ou URL'
             />
 
+            <label className='map-input-label'>Cor de destaque (opcional)</label>
+            <input
+              value={editingPoi.corDestaque || ''}
+              onChange={(e) => setEditingPoi({ ...editingPoi, corDestaque: e.target.value })}
+              style={inputStyle}
+              placeholder='#db2777'
+            />
+            {hasInvalidEditingAccentColor && (
+              <div style={{ marginTop: '-7px', marginBottom: 8, fontSize: 11, color: '#b91c1c' }}>
+                Use um valor no formato `#RRGGBB` ou deixe vazio para cor automatica.
+              </div>
+            )}
+
+            <label className='map-input-label'>Selo do pin (opcional)</label>
+            <input
+              value={editingPoi.selo || ''}
+              onChange={(e) => setEditingPoi({ ...editingPoi, selo: e.target.value })}
+              style={inputStyle}
+              placeholder='Ex: PAL, WC, VIP'
+            />
+
+            <div
+              style={{
+                marginTop: '-2px',
+                marginBottom: 8,
+                padding: '7px 9px',
+                border: '1px dashed #d5dfeb',
+                borderRadius: 10,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: '#f7fbff',
+              }}
+            >
+                <span
+                style={{
+                  minWidth: 28,
+                  height: 28,
+                  padding: '0 7px',
+                  borderRadius: 999,
+                  background: editingAccentColorPreview,
+                  color: '#ffffff',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: 11,
+                }}
+              >
+                {editingBadgePreview}
+              </span>
+              <span style={{ fontSize: 11, color: '#4f647d' }}>
+                Preview do destaque visual deste ponto.
+              </span>
+            </div>
+
             <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
               <button onClick={salvarPonto} style={{ ...actionButton }} className='btn btn-primary'>
                 Salvar
@@ -1306,44 +1609,74 @@ const ModaCenterMap = () => {
           <div
             style={{
               position: 'absolute',
-              top: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 62px)' : 18,
-              left: isMobile ? 8 : 70,
+              left: '50%',
+              bottom: isMobile
+                ? 'calc(8px + env(safe-area-inset-bottom, 0px))'
+                : 14,
+              transform: 'translateX(-50%)',
               zIndex: 1120,
-              display: 'flex',
+              display: 'grid',
               gap: 8,
               alignItems: 'center',
-              padding: '6px',
+              padding: isActionDockExpanded ? '8px' : '6px',
+              width: isActionDockExpanded
+                ? isMobile
+                  ? 'min(calc(100vw - 14px), 420px)'
+                  : 'min(460px, calc(100vw - 30px))'
+                : 'min(calc(100vw - 14px), 280px)',
             }}
-            className='map-surface-toolbar'
+            className={`map-surface-toolbar map-action-dock ${isActionDockExpanded ? 'expanded' : 'collapsed'}`}
           >
             <button
-              onClick={() => {
-                setIsPinsPanelOpen((prev) => !prev);
-                setIsRoutePanelOpen(false);
-              }}
-              className={`map-toggle-btn ${isPinsPanelOpen ? 'active' : ''}`}
+              type='button'
+              onPointerDown={handleActionDockPointerDown}
+              onPointerMove={handleActionDockPointerMove}
+              onPointerUp={finalizeActionDockDrag}
+              onPointerCancel={finalizeActionDockDrag}
+              onClick={handleActionDockClick}
+              className='map-dock-handle'
+              aria-label='Arrastar botoes de acao'
             >
-              Pins ({visiblePois.length})
+              <span className='map-dock-handle-grab' />
+              <span className='map-dock-handle-label'>
+                {isActionDockExpanded
+                  ? 'Arraste para baixo para esconder'
+                  : 'Arraste para cima para abrir acoes'}
+              </span>
             </button>
-            <button
-              onClick={() => {
-                setIsRoutePanelOpen((prev) => !prev);
-                setIsPinsPanelOpen(false);
-              }}
-              className={`map-toggle-btn ${isRoutePanelOpen ? 'active' : ''}`}
-            >
-              Rota
-            </button>
-            {!isPresentationMode && (
-              <button
-                onClick={() => {
-                  setTutorialStepIndex(0);
-                  setIsTutorialOpen(true);
-                }}
-                className='map-toggle-btn'
-              >
-                Tutorial
-              </button>
+
+            {isActionDockExpanded && (
+              <div className='map-action-dock-buttons'>
+                <button
+                  onClick={() => {
+                    setIsPinsPanelOpen((prev) => !prev);
+                    setIsRoutePanelOpen(false);
+                  }}
+                  className={`map-toggle-btn ${isPinsPanelOpen ? 'active' : ''}`}
+                >
+                  Pins ({visiblePois.length})
+                </button>
+                <button
+                  onClick={() => {
+                    setIsRoutePanelOpen((prev) => !prev);
+                    setIsPinsPanelOpen(false);
+                  }}
+                  className={`map-toggle-btn ${isRoutePanelOpen ? 'active' : ''}`}
+                >
+                  Rota
+                </button>
+                {!isPresentationMode && (
+                  <button
+                    onClick={() => {
+                      setTutorialStepIndex(0);
+                      setIsTutorialOpen(true);
+                    }}
+                    className='map-toggle-btn'
+                  >
+                    Tutorial
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -1426,12 +1759,14 @@ const ModaCenterMap = () => {
             >
               {searchablePois.map((poi) => {
                 const checked = manualVisiblePoiIds.includes(poi.id);
+                const accentColor = getPoiAccentColor(poi);
                 return (
                   <div
                     key={`catalog_${poi.id}`}
                     className={`map-list-item pin-result-row ${checked ? 'active' : ''}`}
                     style={{
                       gridTemplateColumns: isPresentationMode ? '1fr auto' : '22px 1fr auto',
+                      borderLeft: `3px solid ${accentColor}`,
                     }}
                   >
                     {!isPresentationMode && (
@@ -1447,7 +1782,13 @@ const ModaCenterMap = () => {
                       onClick={() => focusPoi(poi, true)}
                       className='pin-result-main'
                     >
-                      <span className={`pin-result-type-mark pin-result-type-mark-${poi.tipo}`} />
+                      <span
+                        className={`pin-result-type-mark pin-result-type-mark-${poi.tipo}`}
+                        style={{
+                          background: accentColor,
+                          boxShadow: `0 0 0 3px ${mixColors(accentColor, '#ffffff', 0.74)}`,
+                        }}
+                      />
                       <span className='pin-result-text'>
                         <span className='pin-result-title'>{poi.nome}</span>
                         <span className='pin-result-subtitle'>{poiTypeSingularLabels[poi.tipo]}</span>
@@ -1696,68 +2037,109 @@ const ModaCenterMap = () => {
           <div
             style={{
               position: 'absolute',
-              top: isMobile ? 'auto' : 18,
+              top: 'auto',
               right: isMobile ? 6 : 18,
-              bottom: isMobile ? 'calc(8px + env(safe-area-inset-bottom, 0px))' : 'auto',
+              bottom: isMobile
+                ? 'calc(68px + env(safe-area-inset-bottom, 0px))'
+                : 72,
               left: isMobile ? 6 : 'auto',
               zIndex: 1100,
-              width: isMobile ? 'calc(100vw - 12px)' : 'min(360px, calc(100vw - 36px))',
-              height: isMobile ? `${resolvedMobileSheetHeight}px` : 'auto',
-              minHeight: isMobile && mobileSheetBounds ? `${mobileSheetBounds.minHeight}px` : undefined,
-              maxHeight: isMobile && mobileSheetBounds ? `${mobileSheetBounds.maxHeight}px` : 'min(78dvh, 690px)',
-              overflowY: isMobile ? 'hidden' : 'auto',
+              width: isMobile ? 'calc(100vw - 12px)' : 'min(400px, calc(100vw - 36px))',
+              height: `${resolvedMobileSheetHeight}px`,
+              minHeight: mobileSheetBounds ? `${mobileSheetBounds.minHeight}px` : undefined,
+              maxHeight: mobileSheetBounds ? `${mobileSheetBounds.maxHeight}px` : 'min(80dvh, 740px)',
+              overflowY: 'hidden',
               background: 'var(--color-surface)',
               border: '1px solid var(--color-border)',
               borderRadius: 14,
-              boxShadow: isMobile ? 'var(--shadow-soft)' : 'var(--shadow-float)',
-              padding: isMobile ? 0 : 12,
-              display: isMobile ? 'flex' : 'block',
-              flexDirection: isMobile ? 'column' : undefined,
-              transition: isMobile && !isMobileSheetDragging ? 'height 180ms ease' : undefined,
+              boxShadow: 'var(--shadow-float)',
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              transition: !isMobileSheetDragging ? 'height 180ms ease' : undefined,
             }}
             className='map-floating-panel'
           >
-            {isMobile && (
-              <button
-                type='button'
-                onPointerDown={handleMobileSheetPointerDown}
-                aria-label='Arrastar painel de detalhes'
+            <button
+              type='button'
+              onPointerDown={handleMobileSheetPointerDown}
+              aria-label='Arrastar painel de detalhes'
+              style={{
+                width: '100%',
+                border: 'none',
+                background: 'rgba(248, 250, 252, 0.96)',
+                borderBottom: '1px solid var(--color-border)',
+                padding: '7px 0 6px',
+                cursor: 'ns-resize',
+                touchAction: 'none',
+              }}
+            >
+              <span
                 style={{
-                  width: '100%',
-                  border: 'none',
-                  background: 'rgba(248, 250, 252, 0.96)',
-                  borderBottom: '1px solid var(--color-border)',
-                  padding: '7px 0 6px',
-                  cursor: 'ns-resize',
-                  touchAction: 'none',
+                  display: 'block',
+                  width: 46,
+                  height: 5,
+                  borderRadius: 999,
+                  background: 'var(--color-text-soft)',
+                  margin: '0 auto',
+                }}
+              />
+              <span
+                style={{
+                  display: 'block',
+                  marginTop: 4,
+                  fontSize: 10,
+                  color: 'var(--color-text-muted)',
+                  fontWeight: 700,
                 }}
               >
-                <span
-                  style={{
-                    display: 'block',
-                    width: 46,
-                    height: 5,
-                    borderRadius: 999,
-                    background: 'var(--color-text-soft)',
-                    margin: '0 auto',
-                  }}
-                />
-                <span style={{ display: 'block', marginTop: 4, fontSize: 10, color: 'var(--color-text-muted)', fontWeight: 700 }}>
-                  Arraste para ver mais
-                </span>
-              </button>
-            )}
+                Arraste para cima para ampliar
+              </span>
+            </button>
 
             <div
               style={{
-                padding: isMobile ? '8px 8px 10px' : 0,
-                overflowY: isMobile ? 'auto' : 'visible',
+                padding: isMobile ? '8px 8px 10px' : '10px 12px 12px',
+                overflowY: 'auto',
                 WebkitOverflowScrolling: 'touch',
-                flex: isMobile ? 1 : undefined,
+                flex: 1,
               }}
             >
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-              <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 800, color: 'var(--color-text)' }}>{activePoi.nome}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <span
+                  style={{
+                    minWidth: isMobile ? 28 : 30,
+                    height: isMobile ? 28 : 30,
+                    padding: '0 7px',
+                    borderRadius: 999,
+                    background: activePoiAccentColor,
+                    color: '#ffffff',
+                    border: '1px solid rgba(255,255,255,0.9)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: isMobile ? 10 : 11,
+                    fontWeight: 800,
+                    letterSpacing: '0.03em',
+                    flexShrink: 0,
+                  }}
+                >
+                  {activePoiBadgeText}
+                </span>
+                <div
+                  style={{
+                    fontSize: isMobile ? 15 : 17,
+                    fontWeight: 800,
+                    color: 'var(--color-text)',
+                    whiteSpace: 'nowrap',
+                    textOverflow: 'ellipsis',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {activePoi.nome}
+                </div>
+              </div>
               <button
                 onClick={() => setActivePoiId(null)}
                 style={{
@@ -1775,7 +2157,7 @@ const ModaCenterMap = () => {
             </div>
 
               <div style={{ fontSize: isMobile ? 12 : 13, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-              Evento GNOCENTER · {activePoi.tipo.toUpperCase()}
+              {EVENT_LABEL} - {activePoi.tipo.toUpperCase()}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
@@ -1882,21 +2264,36 @@ const ModaCenterMap = () => {
           minZoom={17}
           maxZoom={MAP_MAX_ZOOM}
           maxBounds={mapBounds}
-          maxBoundsViscosity={0.85}
+          maxBoundsViscosity={LOCK_MAP_POSITION ? 1 : 0.85}
           style={{ height: '100%', width: '100%' }}
           zoomControl={true}
+          scrollWheelZoom={true}
+          doubleClickZoom={true}
+          touchZoom={true}
+          boxZoom={true}
+          keyboard={false}
+          dragging={!LOCK_MAP_POSITION}
           preferCanvas={false}
           zoomAnimation={!isMobile}
           markerZoomAnimation={!isMobile}
           fadeAnimation={!isMobile}
         >
-          <TileLayer
-            url='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-            attribution='&copy; OpenStreetMap contributors'
-          />
+          <Pane
+            name='rotated-basemap'
+            style={{
+              zIndex: 150,
+              transform: `rotate(${BASEMAP_ROTATION_DEG}deg) scale(${BASEMAP_ROTATION_SCALE})`,
+              transformOrigin: '50% 50%',
+            }}
+          >
+            <TileLayer
+              url='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+              attribution='&copy; OpenStreetMap contributors'
+            />
+          </Pane>
           <ImageOverlay url={mapOverlayUrl} bounds={mapBounds} opacity={mapOverlayOpacity} />
           <MapEvents />
-          <MapController focusPoint={focusPoint} isMobile={isMobile} />
+          {!LOCK_MAP_POSITION && <MapController focusPoint={focusPoint} isMobile={isMobile} />}
 
           {routeLatLngPoints.length > 1 && (
             <>
@@ -1949,6 +2346,8 @@ const ModaCenterMap = () => {
           {visiblePois.map((poi) => {
             const isActive = poi.id === activePoiId;
             const popupImage = poi.imagemUrl || defaultPoiImages[poi.tipo];
+            const popupAccentColor = getPoiAccentColor(poi);
+            const popupBadgeText = getPoiBadgeText(poi);
             const popupGallery = getPoiGalleryImages(poi).slice(0, isMobile || isPresentationMode ? 1 : 2);
             return (
               <Marker
@@ -1957,7 +2356,11 @@ const ModaCenterMap = () => {
                 icon={getMarkerIcon(poi, isActive)}
                 eventHandlers={{ click: () => handleMarkerSelection(poi) }}
               >
-                <Popup minWidth={isMobile ? 220 : 244} maxWidth={isMobile ? 286 : 320}>
+                <Popup
+                  autoPan={false}
+                  minWidth={isMobile ? 220 : 244}
+                  maxWidth={isMobile ? 286 : 320}
+                >
                   <div
                     style={{
                       minWidth: isMobile ? 210 : 236,
@@ -1966,6 +2369,9 @@ const ModaCenterMap = () => {
                       overflowY: 'auto',
                       WebkitOverflowScrolling: 'touch',
                       textAlign: 'left',
+                      borderTop: `3px solid ${popupAccentColor}`,
+                      borderRadius: 10,
+                      paddingTop: 4,
                     }}
                     className='store-popup-card'
                   >
@@ -1985,6 +2391,27 @@ const ModaCenterMap = () => {
                         }}
                       />
                       <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                          <span
+                            style={{
+                              minWidth: 22,
+                              height: 22,
+                              borderRadius: 999,
+                              background: popupAccentColor,
+                              color: '#ffffff',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 10,
+                              fontWeight: 800,
+                              letterSpacing: '0.03em',
+                              padding: '0 5px',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {popupBadgeText}
+                          </span>
+                        </div>
                         <div
                           style={{
                             fontSize: isMobile ? 14 : 15,
@@ -1996,7 +2423,7 @@ const ModaCenterMap = () => {
                           {poi.nome}
                         </div>
                         <div style={{ fontSize: isMobile ? 11 : 12, color: '#64748b', marginTop: 2 }}>
-                          Evento GNOCENTER
+                          {EVENT_LABEL}
                         </div>
                       </div>
                     </div>{popupGallery.length > 0 && (

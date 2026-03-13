@@ -67,35 +67,85 @@ body {
 }
 
 .map-surface-toolbar {
-  backdrop-filter: blur(8px);
-  background: var(--color-surface);
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.94);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-soft);
+  border-radius: 18px;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
+}
+
+.map-action-dock {
+  min-height: 48px;
+}
+
+.map-action-dock.expanded {
+  border-color: #c8d6e5;
+}
+
+.map-dock-handle {
+  width: 100%;
+  border: 1px solid #d3deea;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  color: #3d536c;
+  border-radius: 14px;
+  min-height: 36px;
+  font-size: 12px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 10px;
+  touch-action: none;
+}
+
+.map-dock-handle-grab {
+  width: 32px;
+  height: 4px;
+  border-radius: 999px;
+  background: #8ea2b9;
+  flex-shrink: 0;
+}
+
+.map-dock-handle-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-action-dock-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
 }
 
 .map-toggle-btn {
   border: 1px solid var(--color-border-strong);
-  background: var(--color-surface-strong);
+  background: #ffffff;
   color: var(--color-text-muted);
-  border-radius: var(--radius-pill);
-  padding: 7px 12px;
+  border-radius: 12px;
+  padding: 8px 12px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
   font-family: inherit;
   cursor: pointer;
-  transition: all 140ms ease;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+  flex: 1;
+  min-width: 98px;
 }
 
 .map-toggle-btn:hover {
-  transform: translateY(-1px);
   border-color: #9cb1c8;
+  color: #2f455f;
 }
 
 .map-toggle-btn.active {
-  border-color: var(--color-primary);
-  background: var(--color-primary-soft);
-  color: var(--color-primary-strong);
+  border-color: #7ea7ff;
+  background: #eaf2ff;
+  color: #1f4fb8;
 }
 
 @keyframes panel-fade-slide {
@@ -116,7 +166,7 @@ body {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
   backdrop-filter: blur(8px);
-  animation: panel-fade-slide 3000ms ease-out;
+  animation: panel-fade-slide 220ms ease-out;
 }
 
 .map-panel-header {
@@ -555,19 +605,19 @@ body {
 }
 
 .btn {
-  border: none;
-  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  border-radius: 10px;
   padding: 10px;
   color: #ffffff;
   font-family: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
-  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+  transition: border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
 }
 
 .btn:hover {
-  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.16);
 }
 
 .btn:disabled {
@@ -577,18 +627,21 @@ body {
 }
 
 .btn-primary {
-  background: linear-gradient(145deg, #2c66ef, #1b4cc7);
-  box-shadow: 0 8px 18px rgba(32, 86, 221, 0.28);
+  background: #2563eb;
+  border-color: #1d4ed8;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.24);
 }
 
 .btn-secondary {
-  background: linear-gradient(145deg, #0ea5e9, #0d7ec0);
-  box-shadow: 0 8px 18px rgba(14, 165, 233, 0.25);
+  background: #0ea5e9;
+  border-color: #0284c7;
+  box-shadow: 0 8px 16px rgba(14, 165, 233, 0.2);
 }
 
 .btn-neutral {
-  background: #5f738a;
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.2);
+  background: #475569;
+  border-color: #334155;
+  box-shadow: 0 8px 16px rgba(51, 65, 85, 0.22);
 }
 
 .btn-soft {
@@ -597,13 +650,15 @@ body {
 }
 
 .btn-danger {
-  background: linear-gradient(145deg, #db4b4b, #bf2d2d);
-  box-shadow: 0 8px 16px rgba(191, 45, 45, 0.26);
+  background: #dc2626;
+  border-color: #b91c1c;
+  box-shadow: 0 8px 16px rgba(220, 38, 38, 0.2);
 }
 
 .btn-success {
-  background: linear-gradient(145deg, #1fab69, #158c54);
-  box-shadow: 0 8px 16px rgba(21, 140, 84, 0.26);
+  background: #16a34a;
+  border-color: #15803d;
+  box-shadow: 0 8px 16px rgba(22, 163, 74, 0.2);
 }
 
 .btn-outline {
@@ -981,6 +1036,15 @@ body {
 }
 
 @media (max-width: 900px) {
+  .map-action-dock-buttons {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .map-toggle-btn {
+    min-width: 0;
+  }
+
   .leaflet-container .leaflet-popup-content-wrapper {
     border-radius: 12px;
   }

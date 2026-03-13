@@ -9,8 +9,8 @@ const MAP_BASE_CENTER: [number, number] = [-8.282769956514597, -35.9659465460987
 // Ajuste fino de posicionamento do overlay.
 // LAT: positivo sobe (norte), negativo desce (sul)
 // LNG: positivo vai para direita (leste), negativo vai para esquerda (oeste)
-const MAP_OFFSET_LAT = 0;
-const MAP_OFFSET_LNG = 0;
+const MAP_OFFSET_LAT = 0.0002;
+const MAP_OFFSET_LNG = 0.0017;
 
 export const MAP_CENTER: [number, number] = [
   MAP_BASE_CENTER[0] + MAP_OFFSET_LAT,
@@ -19,7 +19,7 @@ export const MAP_CENTER: [number, number] = [
 
 // Ajuste final para o Armazem da Criatividade, mantendo enquadramento horizontal.
 // Menor = overlay menor; maior = overlay maior.
-const MAP_SPAN_LNG = 0.00105;
+const MAP_SPAN_LNG = 0.00092;
 const MAP_ASPECT_RATIO = MAP_PIXEL_WIDTH / MAP_PIXEL_HEIGHT;
 const latRadians = (MAP_CENTER[0] * Math.PI) / 180;
 const MAP_SPAN_LAT = (MAP_SPAN_LNG * Math.cos(latRadians)) / MAP_ASPECT_RATIO;
