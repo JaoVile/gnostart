@@ -1,76 +1,73 @@
-# Gnocenter
+# React + TypeScript + Vite
 
-Aplicacao web de navegacao interna para eventos sociais no GNOCENTER.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-## O que o mapa entrega
+Currently, two official plugins are available:
 
-- visualizacao de pontos do evento (atividades, servicos, entradas e banheiros)
-- busca rapida por pontos
-- calculo de rota entre origem e destino
-- estimativa de distancia e tempo medio de caminhada
-- modo admin para cadastrar/editar pontos no proprio mapa
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-## Estrutura
+## React Compiler
 
-```text
-gnocenter/
-|- frontend/   # app React + Vite
-|- backend/    # reservado
-|- scripts/    # utilitarios para gerar navGraph
-`- README.md
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+
+```js
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+
+      // Remove tseslint.configs.recommended and replace with this
+      tseslint.configs.recommendedTypeChecked,
+      // Alternatively, use this for stricter rules
+      tseslint.configs.strictTypeChecked,
+      // Optionally, add this for stylistic rules
+      tseslint.configs.stylisticTypeChecked,
+
+      // Other configs...
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
 ```
 
-## Pre-requisitos
+You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
 
-- Node.js 20+
-- npm
+```js
+// eslint.config.js
+import reactX from 'eslint-plugin-react-x'
+import reactDom from 'eslint-plugin-react-dom'
 
-## Como rodar
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-## Build
-
-```powershell
-cd frontend
-npm run build
-```
-
-## Atualizar malha de rotas (navGraph)
-
-1. Exporte o mapa logico para imagem (`.png` recomendado).
-2. Use o arquivo exportado no `scripts/`.
-3. Gere o grafo:
-
-```powershell
-cd scripts
-npm install
-npm run build:graph
-```
-
-O comando sobrescreve:
-
-- `frontend/src/data/navGraph.json`
-
-### Variaveis opcionais para o gerador
-
-- `MAP_LOGIC_IMAGE` (padrao: `mapa-logica.png`)
-- `MAP_GRAPH_OUTPUT` (padrao: `../frontend/src/data/navGraph.json`)
-- `GRID_SIZE` (padrao: `15`)
-- `WALKABLE_MODE`:
-  - `light` -> pixels claros sao caminhaveis (use quando preto = proibido)
-  - `dark` -> pixels escuros sao caminhaveis
-- `COLOR_THRESHOLD` (padrao: `200`)
-
-Exemplo (preto = bloqueado, branco = caminhavel):
-
-```powershell
-cd scripts
-$env:MAP_LOGIC_IMAGE='mapa-logica-export.png'
-$env:WALKABLE_MODE='light'
-npm run build:graph
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+      // Enable lint rules for React
+      reactX.configs['recommended-typescript'],
+      // Enable lint rules for React DOM
+      reactDom.configs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+])
 ```

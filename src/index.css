@@ -185,6 +185,14 @@ body {
   font-size: 11px;
 }
 
+.map-dock-handle-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 11px;
+}
+
 .map-dock-quick-strip {
   width: 100%;
   max-width: 330px;

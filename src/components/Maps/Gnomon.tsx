@@ -22,6 +22,15 @@ import {
 } from 'react';
 import { findNearestNode, findPath } from '../../utils/pathfinding';
 import {
+  createPoi,
+  deletePoi,
+  fetchMapBootstrap,
+  trackPoiAccess,
+  updatePoi,
+  type MapPoiDto,
+  type UpsertPoiPayload,
+} from '../../services/mapApi';
+import {
   MAP_CENTER,
   MAP_EAST,
   MAP_NORTH,
@@ -368,6 +377,7 @@ const PRESENTATION_MODE_DEFAULT = true;
 const POI_DATA_EXPORT_FILENAME = 'locais_evento_social.json';
 const EVENT_NAME = 'GNOSTART';
 const EVENT_LABEL = `Evento ${EVENT_NAME}`;
+const FRONT_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3333';
 
 const getPresentationModeFromQuery = () => {
   if (typeof window === 'undefined') return PRESENTATION_MODE_DEFAULT;
@@ -379,6 +389,15 @@ const getPresentationModeFromQuery = () => {
   if (rawMode === 'admin' || rawMode === 'edicao') return false;
   if (rawMode === 'apresentacao' || rawMode === 'demo') return true;
   return PRESENTATION_MODE_DEFAULT;
+};
+
+const getModeUrl = (mode: 'admin' | 'apresentacao') => {
+  if (typeof window === 'undefined') return `?${PRESENTATION_MODE_QUERY_KEY}=${mode}`;
+  const params = new URLSearchParams(window.location.search);
+  params.set(PRESENTATION_MODE_QUERY_KEY, mode);
+  const queryString = params.toString();
+  const query = queryString ? `?${queryString}` : '';
+  return `${window.location.pathname}${query}${window.location.hash}`;
 };
 
 const defaultPoiImages: Record<PoiType, string> = {
@@ -437,8 +456,8 @@ const rawInitialPois: PointData[] = [
     id: 'recepcao_credenciamento',
     nome: 'Recepcao e Credenciamento',
     tipo: 'servico',
-    x: 744,
-    y: 737,
+    x: 360,
+    y: 800,
     descricao: 'Retirada de pulseiras e apoio inicial.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
     contato: '(81) 99999-1010',
@@ -449,8 +468,8 @@ const rawInitialPois: PointData[] = [
     id: 'palco_principal',
     nome: 'Palco Principal',
     tipo: 'atividade',
-    x: 748,
-    y: 449,
+    x: 1420,
+    y: 240,
     descricao: 'Programacao principal do evento.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
     corDestaque: '#ea580c',
@@ -460,7 +479,7 @@ const rawInitialPois: PointData[] = [
     id: 'lounge_convivio',
     nome: 'Lounge de Convivio',
     tipo: 'atividade',
-    x: 477,
+    x: 750,
     y: 524,
     descricao: 'Espaco para descanso e networking.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
@@ -471,8 +490,8 @@ const rawInitialPois: PointData[] = [
     id: 'espaco_fotos',
     nome: 'Espaco de Fotos',
     tipo: 'atividade',
-    x: 1069,
-    y: 502,
+    x: 830,
+    y: 230,
     descricao: 'Area cenografica para fotos.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
     corDestaque: '#db2777',
@@ -482,8 +501,8 @@ const rawInitialPois: PointData[] = [
     id: 'area_alimentacao',
     nome: 'Area de Alimentacao',
     tipo: 'servico',
-    x: 748,
-    y: 266,
+    x: 1270,
+    y: 800,
     descricao: 'Ponto de alimentacao e bebidas.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
     corDestaque: '#0d9488',
@@ -493,8 +512,8 @@ const rawInitialPois: PointData[] = [
     id: 'posto_apoio',
     nome: 'Posto de Apoio',
     tipo: 'servico',
-    x: 344,
-    y: 356,
+    x: 410,
+    y: 400,
     descricao: 'Informacoes e apoio ao participante.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
     contato: '(81) 99999-2020',
@@ -505,8 +524,8 @@ const rawInitialPois: PointData[] = [
     id: 'banheiro_social',
     nome: 'Banheiro Social',
     tipo: 'banheiro',
-    x: 1193,
-    y: 360,
+    x: 1170,
+    y: 100,
     descricao: 'Banheiro de apoio ao publico.',
     imagemUrl: '/images/pois/indicadores/banheiro.svg',
     corDestaque: '#0284c7',
@@ -514,11 +533,11 @@ const rawInitialPois: PointData[] = [
   },
   {
     id: 'saida_lateral',
-    nome: 'Saida Lateral',
+    nome: 'Entrada 2',
     tipo: 'entrada',
-    x: 1382,
-    y: 131,
-    descricao: 'Saida secundaria para fluxo de evacuacao.',
+    x: 664,
+    y: 150,
+    descricao: 'Entrada secundaria para fluxo de evacuacao.',
     imagemUrl: '/images/pois/indicadores/entrada.svg',
     corDestaque: '#15803d',
     selo: 'S2',
@@ -526,9 +545,31 @@ const rawInitialPois: PointData[] = [
 ];
 
 const attachNearestNode = (poi: PointData): PointData => {
+  if (poi.nodeId) return poi;
   const nearestNode = findNearestNode(poi.x, poi.y, 90);
   return { ...poi, nodeId: nearestNode ?? undefined };
 };
+
+const fromApiPoi = (poi: MapPoiDto): PointData => attachNearestNode(poi);
+
+const toPoiApiPayload = (
+  poi: PointData,
+  options?: {
+    includeId?: boolean;
+  },
+): UpsertPoiPayload => ({
+  ...(options?.includeId ? { id: poi.id } : {}),
+  nome: poi.nome,
+  tipo: poi.tipo,
+  x: poi.x,
+  y: poi.y,
+  descricao: poi.descricao,
+  imagemUrl: poi.imagemUrl,
+  contato: poi.contato,
+  corDestaque: poi.corDestaque,
+  selo: poi.selo,
+  nodeId: poi.nodeId,
+});
 
 const normalizeContact = (value?: string) => value?.trim() ?? '';
 const toContactLink = (contact?: string) => {
@@ -662,7 +703,10 @@ const ModaCenterMap = () => {
   const [isRoutePanelOpen, setIsRoutePanelOpen] = useState(false);
   const [isActionDockExpanded, setIsActionDockExpanded] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdminAccessMenuOpen, setIsAdminAccessMenuOpen] = useState(false);
+  const [adminLinkCopied, setAdminLinkCopied] = useState(false);
   const [pois, setPois] = useState<PointData[]>(() => rawInitialPois.map(attachNearestNode));
+  const [mapOverlayUrl, setMapOverlayUrl] = useState('/maps/mapa-visual.png');
   const [rota, setRota] = useState<number[][] | null>(null);
   const [editingPoi, setEditingPoi] = useState<EditingPoi | null>(null);
   const [focusPoint, setFocusPoint] = useState<PointData | null>(null);
@@ -703,6 +747,58 @@ const ModaCenterMap = () => {
     setIsAdmin(false);
     setEditingPoi(null);
   }, [isPresentationMode, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdminAccessMenuOpen || typeof window === 'undefined') return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsAdminAccessMenuOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [isAdminAccessMenuOpen]);
+
+  const openAdminMode = () => {
+    if (typeof window === 'undefined') return;
+    window.location.href = getModeUrl('admin');
+  };
+
+  const copyAdminModeLink = async () => {
+    if (typeof window === 'undefined') return;
+    const absoluteUrl = `${window.location.origin}${getModeUrl('admin')}`;
+    try {
+      await navigator.clipboard.writeText(absoluteUrl);
+      setAdminLinkCopied(true);
+      window.setTimeout(() => setAdminLinkCopied(false), 1800);
+    } catch {
+      window.prompt('Copie o link de acesso admin:', absoluteUrl);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncBootstrap = async () => {
+      try {
+        const bootstrap = await fetchMapBootstrap();
+        if (cancelled) return;
+
+        if (bootstrap.map?.overlayUrl?.trim()) {
+          setMapOverlayUrl(bootstrap.map.overlayUrl.trim());
+        }
+
+        if (Array.isArray(bootstrap.pois) && bootstrap.pois.length > 0) {
+          setPois(bootstrap.pois.map(fromApiPoi));
+        }
+      } catch (error) {
+        console.error('Falha ao sincronizar dados do mapa no backend:', error);
+      }
+    };
+
+    void syncBootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activePoi = useMemo(
     () => (activePoiId ? pois.find((poi) => poi.id === activePoiId) ?? null : null),
@@ -948,6 +1044,9 @@ const ModaCenterMap = () => {
       ...prev,
       [poiId]: (prev[poiId] ?? 0) + 1,
     }));
+    void trackPoiAccess(poiId).catch((error) => {
+      console.warn('Nao foi possivel registrar acesso do POI no backend:', error);
+    });
   };
 
   const focusPoi = (poi: PointData, registerAccess = true) => {
@@ -1153,7 +1252,7 @@ const ModaCenterMap = () => {
     return null;
   };
 
-  const salvarPonto = () => {
+  const salvarPonto = async () => {
     if (!editingPoi || !editingPoi.nome || !editingPoi.tipo) {
       alert('Informe nome e tipo do ponto.');
       return;
@@ -1191,35 +1290,53 @@ const ModaCenterMap = () => {
       nodeId: nearestNode,
     };
 
-    setPois((prev) => {
-      const index = prev.findIndex((item) => item.id === novoPonto.id);
-      if (index >= 0) {
-        const updated = [...prev];
-        updated[index] = novoPonto;
-        return updated;
-      }
-      return [...prev, novoPonto];
-    });
+    try {
+      const syncedPoi = editingPoi.id
+        ? await updatePoi(editingPoi.id, toPoiApiPayload(novoPonto))
+        : await createPoi(toPoiApiPayload(novoPonto, { includeId: true }));
 
-    setEditingPoi(null);
+      const normalizedPoi = fromApiPoi(syncedPoi);
+
+      setPois((prev) => {
+        const index = prev.findIndex((item) => item.id === normalizedPoi.id);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = normalizedPoi;
+          return updated;
+        }
+        return [...prev, normalizedPoi];
+      });
+
+      setEditingPoi(null);
+    } catch (error) {
+      console.error('Falha ao salvar ponto no backend:', error);
+      alert('Nao foi possivel salvar o ponto no backend. Confira a API e a ADMIN_API_KEY.');
+    }
   };
 
-  const deletarPonto = (id: string) => {
+  const deletarPonto = async (id: string) => {
     if (!window.confirm('Apagar este ponto permanentemente?')) return;
 
-    setPois((prev) => prev.filter((poi) => poi.id !== id));
-    setPoiAccessCount((prev) => {
-      if (!(id in prev)) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setManualVisiblePoiIds((prev) => prev.filter((poiId) => poiId !== id));
-    if (activePoiId === id) setActivePoiId(null);
-    if (selectedOriginId === id || selectedDestinationId === id) {
-      clearRoute();
+    try {
+      await deletePoi(id);
+
+      setPois((prev) => prev.filter((poi) => poi.id !== id));
+      setPoiAccessCount((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setManualVisiblePoiIds((prev) => prev.filter((poiId) => poiId !== id));
+      if (activePoiId === id) setActivePoiId(null);
+      if (selectedOriginId === id || selectedDestinationId === id) {
+        clearRoute();
+      }
+      setEditingPoi(null);
+    } catch (error) {
+      console.error('Falha ao deletar ponto no backend:', error);
+      alert('Nao foi possivel deletar o ponto no backend. Confira a API e a ADMIN_API_KEY.');
     }
-    setEditingPoi(null);
   };
 
   const toggleType = (type: PoiType) => {
@@ -1441,7 +1558,6 @@ const ModaCenterMap = () => {
   const primaryPoiAction = shouldPromoteSetOrigin ? setActivePoiAsOrigin : handleDirectionsFromActivePoi;
   const secondaryPoiAction = shouldPromoteSetOrigin ? handleDirectionsFromActivePoi : setActivePoiAsOrigin;
   const currentTutorialStep = tutorialSteps[tutorialStepIndex];
-  const mapOverlayUrl = '/maps/mapa-visual.png';
   const mapOverlayOpacity = isMapIntroActive ? (isMobile ? 0.2 : 0.16) : isMobile ? 0.98 : 0.94;
   const basemapOpacity = isMapIntroActive ? 1 : 0;
   const panelTopOffset = isMobile ? 'calc(env(safe-area-inset-top, 0px) + 118px)' : 108;
@@ -1718,9 +1834,7 @@ const ModaCenterMap = () => {
         )}
 
         {!isAdmin && (
-          <div
-            className='map-brand-header'
-          >
+          <div className='map-brand-header'>
             <span className='map-brand-icon-shell'>
               <img src={brandIcon} alt='Logo Gnomon' className='map-brand-icon' />
             </span>
@@ -2409,6 +2523,71 @@ const ModaCenterMap = () => {
             </div>
             </div>
           </div>
+        )}
+
+        {isPresentationMode && !isAdmin && (
+          <>
+            <button
+              onClick={() => setIsAdminAccessMenuOpen((prev) => !prev)}
+              style={{ top: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 10px)' : 14 }}
+              className='map-admin-trigger'
+              title='Abrir menu de acesso admin'
+            >
+              Acesso
+            </button>
+
+            {isAdminAccessMenuOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: isMobile ? 'calc(env(safe-area-inset-top, 0px) + 50px)' : 54,
+                  left: 12,
+                  zIndex: 1250,
+                  width: isMobile ? 'min(86vw, 300px)' : 300,
+                  borderRadius: 12,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  boxShadow: 'var(--shadow-float)',
+                  padding: 12,
+                  display: 'grid',
+                  gap: 8,
+                }}
+                className='map-floating-panel'
+              >
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text)' }}>Menu admin</div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.45 }}>
+                  Acesso rapido para abrir o modo de edicao do mapa.
+                </div>
+                <button
+                  onClick={openAdminMode}
+                  style={{ ...actionButton, padding: '9px 10px' }}
+                  className='btn btn-primary'
+                >
+                  Abrir modo admin
+                </button>
+                <button
+                  onClick={() => {
+                    void copyAdminModeLink();
+                  }}
+                  style={{ ...actionButton, padding: '9px 10px' }}
+                  className='btn btn-neutral'
+                >
+                  {adminLinkCopied ? 'Link copiado' : 'Copiar link admin'}
+                </button>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--color-text-muted)',
+                    borderTop: '1px dashed var(--color-border)',
+                    paddingTop: 7,
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  API ativa: {FRONT_API_BASE_URL}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {!isPresentationMode && !isAdmin && (
