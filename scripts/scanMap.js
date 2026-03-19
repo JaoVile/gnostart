@@ -3,7 +3,7 @@ const path = require('path');
 const Jimp = require('jimp');
 
 const INPUT_IMAGE = process.env.MAP_LOGIC_IMAGE || 'mapa-logica.png';
-const OUTPUT_FILE = process.env.MAP_GRAPH_OUTPUT || '../frontend/src/data/navGraph.json';
+const OUTPUT_FILE = process.env.MAP_GRAPH_OUTPUT || '../src/data/navGraph.json';
 const GRID_SIZE = Number.parseInt(process.env.GRID_SIZE || '15', 10);
 const WALKABLE_MODE = (process.env.WALKABLE_MODE || 'white-only').trim().toLowerCase();
 const COLOR_THRESHOLD = Number.parseInt(process.env.COLOR_THRESHOLD || '245', 10);
@@ -16,7 +16,7 @@ const validateInputExtension = (inputPath) => {
   const ext = path.extname(inputPath).toLowerCase();
   if (ext !== '.png' && ext !== '.jpg' && ext !== '.jpeg' && ext !== '.bmp') {
     throw new Error(
-      `Formato ${ext || '(sem extensao)'} nao suportado. Exporte o mapa logico para PNG/JPG antes de gerar o grafo.`,
+      `Formato ${ext || '(sem extensao)'} não suportado. Exporte o mapa lógico para PNG/JPG antes de gerar o grafo.`,
     );
   }
 };
@@ -44,24 +44,24 @@ async function generateGraph() {
   }
 
   if (!['white-only', 'light', 'dark'].includes(WALKABLE_MODE)) {
-    throw new Error("WALKABLE_MODE invalido. Use 'white-only' (padrao), 'light' ou 'dark'.");
+    throw new Error("WALKABLE_MODE inválido. Use 'white-only' (padrão), 'light' ou 'dark'.");
   }
 
   validateInputExtension(inputPath);
 
   if (!fs.existsSync(inputPath)) {
-    throw new Error(`Arquivo de entrada nao encontrado: ${inputPath}`);
+    throw new Error(`Arquivo de entrada não encontrado: ${inputPath}`);
   }
 
-  console.log(`Lendo mapa logico: ${inputPath}`);
+  console.log(`Lendo mapa lógico: ${inputPath}`);
   console.log(
-    `Modo caminhavel: ${WALKABLE_MODE} | limiar: ${COLOR_THRESHOLD} | bloqueio<=${BLOCKED_THRESHOLD} | grid: ${GRID_SIZE}px`,
+    `Modo caminhável: ${WALKABLE_MODE} | limiar: ${COLOR_THRESHOLD} | bloqueio<=${BLOCKED_THRESHOLD} | grid: ${GRID_SIZE}px`,
   );
 
   const image = await Jimp.read(inputPath);
   const width = image.bitmap.width;
   const height = image.bitmap.height;
-  console.log(`Dimensoes da imagem: ${width}x${height}`);
+  console.log(`Dimensões da imagem: ${width}x${height}`);
 
   const graph = {};
   const nodes = [];
@@ -78,8 +78,8 @@ async function generateGraph() {
     }
   }
 
-  console.log(`Nos caminhaveis: ${nodes.length}`);
-  console.log('Criando conexoes...');
+  console.log(`Nós caminháveis: ${nodes.length}`);
+  console.log('Criando conexões...');
 
   nodes.forEach((node) => {
     const { x, y, id } = node;

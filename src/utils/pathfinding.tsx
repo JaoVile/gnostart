@@ -69,7 +69,7 @@ export const findNearestNode = (x: number, y: number, maxDistance = 50): string 
 
 export const findPath = (startId: string, endId: string) => {
   if (!graph[startId] || !graph[endId]) {
-    console.error('Nos de origem ou destino invalidos.');
+    console.error('Nós de origem ou destino inválidos para o traçado da rota.');
     return null;
   }
 

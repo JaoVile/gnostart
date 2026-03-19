@@ -1,7 +1,10 @@
 import {
+  Circle,
+  CircleMarker,
   ImageOverlay,
   MapContainer,
   Marker,
+  Polygon,
   Polyline,
   Popup,
   TileLayer,
@@ -17,6 +20,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
@@ -31,19 +35,51 @@ import {
   type UpsertPoiPayload,
 } from '../../services/mapApi';
 import {
+  EVENT_BOUNDARY_IMAGE_POINTS,
   MAP_CENTER,
   MAP_EAST,
   MAP_NORTH,
+  MAP_OVERLAY_EAST,
+  MAP_OVERLAY_NORTH,
+  MAP_OVERLAY_SOUTH,
+  MAP_OVERLAY_WEST,
   MAP_PIXEL_HEIGHT,
   MAP_PIXEL_WIDTH,
   MAP_SOUTH,
   MAP_WEST,
 } from '../../config/mapConfig';
+import rawInitialPoisSeed from '../../data/locaisEventoSocialSeed.json';
 import brandIcon from '../../assets/icone.png';
 
 type PoiType = 'atividade' | 'servico' | 'banheiro' | 'entrada';
 
 type PoiAccessCount = Record<string, number>;
+type AgendaDayId = '21';
+type PoiDataSource = 'backend' | 'local-workspace' | 'local-backup' | 'front-seed';
+type DockPanel = 'pins' | 'route' | 'agenda' | null;
+
+interface AgendaSpeaker {
+  name: string;
+  role: string;
+}
+
+interface AgendaSession {
+  id: string;
+  dayId: AgendaDayId;
+  weekday: string;
+  dateLabel: string;
+  category: string;
+  title: string;
+  summary: string;
+  venue: string;
+  audience: string;
+  startTime: string;
+  endTime: string;
+  accent: string;
+  mapQuery?: string;
+  linkedPoiId?: string;
+  speakers: AgendaSpeaker[];
+}
 
 interface PointData {
   id: string;
@@ -59,7 +95,382 @@ interface PointData {
   nodeId?: string;
 }
 
+const agendaDays: { id: AgendaDayId; weekday: string; dateLabel: string }[] = [
+  { id: '21', weekday: 'SAB', dateLabel: '21' },
+];
+
+const saturdayAgendaMeta: Pick<AgendaSession, 'dayId' | 'weekday' | 'dateLabel'> = {
+  dayId: '21',
+  weekday: 'SAB',
+  dateLabel: '21',
+};
+
+const BRAND_COLORS = {
+  ink: '#5c33ad',
+  inkSoft: '#7b56ca',
+  primary: '#6a38d0',
+  primaryStrong: '#5326b8',
+  primarySoft: '#8d6fe7',
+  primarySoftest: '#efe8ff',
+  highlight: '#d9c8ff',
+  highlightSoft: '#f5efff',
+  surface: '#ffffff',
+  surfaceSoft: '#f6f2fc',
+  border: '#ddd4ee',
+  textMuted: '#6f677f',
+} as const;
+
+const BRAND_PALETTE = new Set<string>(Object.values(BRAND_COLORS));
+
+const agendaCategoryAccents: Record<string, string> = {
+  'Palco Principal': BRAND_COLORS.primary,
+  'Arena Experiência': BRAND_COLORS.primarySoft,
+  'Oficina Game': BRAND_COLORS.primaryStrong,
+  Hotseat: BRAND_COLORS.ink,
+  Intervalo: BRAND_COLORS.highlight,
+};
+
+const poiTypeAccentMap: Record<PoiType, string> = {
+  atividade: BRAND_COLORS.primary,
+  servico: BRAND_COLORS.ink,
+  banheiro: BRAND_COLORS.primarySoft,
+  entrada: BRAND_COLORS.highlight,
+};
+
+const getAgendaAccent = (category: string) => agendaCategoryAccents[category] ?? BRAND_COLORS.primary;
+
+const createAgendaSession = (
+  session: Omit<AgendaSession, 'dayId' | 'weekday' | 'dateLabel'>,
+): AgendaSession => ({
+  ...saturdayAgendaMeta,
+  ...session,
+  accent: getAgendaAccent(session.category),
+});
+
+const agendaVenuePriority: Record<string, number> = {
+  'Recepção e Credenciamento': 0,
+  'Palco Principal': 1,
+  'Laboratório Game': 2,
+  'Sala de Economia Criativa 01': 3,
+  'Sala de Economia Criativa 02': 4,
+  'Arena Experiência': 5,
+  'Área de Alimentação': 6,
+};
+
+const compareAgendaSessions = (left: AgendaSession, right: AgendaSession) => {
+  const startDifference = parseAgendaTimeToMinutes(left.startTime) - parseAgendaTimeToMinutes(right.startTime);
+  if (startDifference !== 0) return startDifference;
+
+  const venueDifference = (agendaVenuePriority[left.venue] ?? 99) - (agendaVenuePriority[right.venue] ?? 99);
+  if (venueDifference !== 0) return venueDifference;
+
+  const endDifference = parseAgendaTimeToMinutes(left.endTime) - parseAgendaTimeToMinutes(right.endTime);
+  if (endDifference !== 0) return endDifference;
+
+  return left.title.localeCompare(right.title, 'pt-BR');
+};
+
+const agendaSessions: AgendaSession[] = [
+  createAgendaSession({
+    id: 'agenda_21_credenciamento',
+    category: 'Palco Principal',
+    title: 'Credenciamento',
+    summary: 'Recepção inicial, credenciamento e orientações de chegada para abrir o único dia oficial do evento com fluxo organizado.',
+    venue: 'Recepção e Credenciamento',
+    audience: 'Público geral',
+    startTime: '09:00',
+    endTime: '09:45',
+    accent: '#4c6fff',
+    linkedPoiId: 'recepcao_credenciamento',
+    speakers: [{ name: 'Equipe do evento', role: 'Credenciamento e recepção' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_arena_experiencia',
+    category: 'Arena Experiência',
+    title: 'Espaços dos parceiros abertos ao público',
+    summary: 'SENAI - Sistema FIEPE, SENAC, Jardim Digital, ASCES e UNINASSAU funcionam continuamente das 09h às 17h na Arena Experiência.',
+    venue: 'Arena Experiência',
+    audience: 'Circulação livre',
+    startTime: '09:00',
+    endTime: '17:00',
+    accent: '#15803d',
+    mapQuery: 'arena experiencia',
+    speakers: [{ name: 'Parceiros do evento', role: 'Ativações abertas' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_oficina_gamelab_01',
+    category: 'Oficina Game',
+    title: 'Oficina 01: GameLab - Do zero ao jogo: criando experiências na prática',
+    summary: 'Laboratório Game no Arena Porto Digital com Gustavo Tenorio e Rafael Silva, em uma oficina prática de criação de jogos.',
+    venue: 'Laboratório Game',
+    audience: 'Estudantes, devs e criadores',
+    startTime: '09:00',
+    endTime: '11:00',
+    accent: '#0d9488',
+    mapQuery: 'laboratorio game',
+    speakers: [
+      { name: 'Gustavo Tenorio', role: 'PLAYNAMBUCO' },
+      { name: 'Rafael Silva', role: 'PLAYNAMBUCO' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_abertura_institucional',
+    category: 'Palco Principal',
+    title: 'Abertura institucional',
+    summary: 'Boas-vindas oficiais e alinhamento da programação do sábado 21, com abertura do palco principal.',
+    venue: 'Palco Principal',
+    audience: 'Público geral',
+    startTime: '09:45',
+    endTime: '10:00',
+    accent: '#ea580c',
+    linkedPoiId: 'palco_principal',
+    speakers: [{ name: 'Organização Gnostart', role: 'Abertura oficial' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_palestra_tempo_dinheiro_atencao',
+    category: 'Palco Principal',
+    title: 'Palestra: Tempo, dinheiro e atenção: acelere seus resultados financeiros dominando os três recursos mais escassos do mundo',
+    summary: 'Gui Junqueira conduz a palestra principal da manhã sobre tempo, dinheiro e atenção como recursos decisivos para acelerar resultados.',
+    venue: 'Palco Principal',
+    audience: 'Empreendedores, gestores e investidores',
+    startTime: '10:00',
+    endTime: '11:00',
+    accent: '#7c3aed',
+    linkedPoiId: 'palco_principal',
+    speakers: [{ name: 'Gui Junqueira', role: 'Palestrante' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_painel_agreste_transformacao',
+    category: 'Palco Principal',
+    title: 'Painel: Agreste em Transformação - Inovação, Desafios e Oportunidades',
+    summary: 'Debate sobre inovação regional, desafios e oportunidades no Agreste com setor público, academia, ecossistema e lideranças empresariais.',
+    venue: 'Palco Principal',
+    audience: 'Ecossistema de inovação, poder público e lideranças',
+    startTime: '11:00',
+    endTime: '12:00',
+    accent: '#2563eb',
+    linkedPoiId: 'palco_principal',
+    speakers: [
+      { name: 'Teresa Maciel', role: 'Secretaria Executiva da SECTI' },
+      { name: 'Pamela Dias', role: 'Gestora do Porto Digital Caruaru' },
+      { name: 'Mendonca Filho', role: 'Deputado Federal' },
+      { name: 'Jaime Anselmo', role: 'Secretário da SEDETEC - Caruaru' },
+      { name: 'Luverson Ferreira', role: 'Empresário e Conselheiro da ACIC' },
+      { name: 'Claudia Brainer', role: 'Asces-Unita' },
+      { name: 'Dilson Cavalcanti', role: 'Diretor do Campus Agreste da UFPE' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_hotseat_maturidade_digital',
+    category: 'Hotseat',
+    title: 'Hotseat: Maturidade digital no interior',
+    summary: 'Aprendendo com quem constrói empresas no ecossistema: "Maturidade digital no interior: como avaliar o estágio real da empresa antes de investir em novas ferramentas."',
+    venue: 'Sala de Economia Criativa 01',
+    audience: 'Empresas, consultores e lideranças',
+    startTime: '11:00',
+    endTime: '11:45',
+    accent: '#db2777',
+    mapQuery: 'sala de economia criativa 01',
+    speakers: [
+      { name: 'Rafael Soares', role: 'Tapioca Valley' },
+      { name: 'Pamela Rita', role: 'Tapioca Valley' },
+      { name: 'Fabio Moura', role: 'CaruaHub' },
+      { name: 'Deivid Figueiroa', role: 'CaruaHub' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_hotseat_erros_caros',
+    category: 'Hotseat',
+    title: 'Hotseat: Erros caros em projetos de tecnologia',
+    summary: 'Aprendendo com quem constrói empresas no ecossistema: "Erros caros em projetos de tecnologia: aprendizados reais de quem já enfrentou atrasos, retrabalho e baixo retorno."',
+    venue: 'Sala de Economia Criativa 02',
+    audience: 'Empresas, devs e gestores de projetos',
+    startTime: '11:00',
+    endTime: '11:45',
+    accent: '#be185d',
+    mapQuery: 'sala de economia criativa 02',
+    speakers: [
+      { name: 'Arthur Bessone', role: 'Tapioca Valley' },
+      { name: 'Joao Moises', role: 'Manguezal' },
+      { name: 'Vandilma Benevides', role: 'CaruaHub' },
+      { name: 'Inacio Ferreira', role: 'CaruaHub' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_intervalo_almoco',
+    category: 'Intervalo',
+    title: 'Intervalo para almoço',
+    summary: 'Pausa de almoço para alimentação, networking e circulação pelos espaços abertos do evento.',
+    venue: 'Área de Alimentação',
+    audience: 'Público geral',
+    startTime: '12:00',
+    endTime: '13:00',
+    accent: '#16a34a',
+    linkedPoiId: 'area_alimentacao',
+    speakers: [{ name: 'Área de Alimentação', role: 'Funcionamento livre' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_pitch_open_mic',
+    category: 'Palco Principal',
+    title: 'Pitch de Startups / Open Mic',
+    summary: 'Espaço aberto para ideias, negócios e conexões no palco principal, com participação livre em formato microfone aberto.',
+    venue: 'Palco Principal',
+    audience: 'Empreendedores e comunidade',
+    startTime: '13:00',
+    endTime: '14:00',
+    accent: '#f59e0b',
+    linkedPoiId: 'palco_principal',
+    speakers: [{ name: 'Participantes do evento', role: 'Open mic' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_oficina_gamelab_02',
+    category: 'Oficina Game',
+    title: 'Oficina 02: GameLab - Do zero ao jogo: criando experiências na prática',
+    summary: 'Segunda rodada do Laboratório Game na Arena Porto Digital, mantendo a trilha prática de criação de jogos com PLAYNAMBUCO.',
+    venue: 'Laboratório Game',
+    audience: 'Estudantes, devs e criadores',
+    startTime: '13:00',
+    endTime: '15:00',
+    accent: '#0f766e',
+    mapQuery: 'laboratorio game',
+    speakers: [
+      { name: 'Gustavo Tenorio', role: 'PLAYNAMBUCO' },
+      { name: 'Rafael Silva', role: 'PLAYNAMBUCO' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_painel_mobilidade_futuro',
+    category: 'Palco Principal',
+    title: 'Painel: Mobilidade do Futuro - Energia, IA e Veículos Inteligentes no Brasil',
+    summary: 'Painel sobre energia, inteligência artificial e veículos inteligentes no Brasil, conectado ao futuro da mobilidade.',
+    venue: 'Palco Principal',
+    audience: 'Indústria, tecnologia e mobilidade',
+    startTime: '14:00',
+    endTime: '15:00',
+    accent: '#4f46e5',
+    linkedPoiId: 'palco_principal',
+    speakers: [
+      { name: 'Joao Moizes', role: 'Voxar Labs' },
+      { name: 'Artur Bezerra', role: 'EPTAR' },
+      { name: 'Antonio Almeida', role: 'UNINASSAU' },
+      { name: 'Jackson Carvalho', role: 'ACIC' },
+      { name: 'Bruno Brasil', role: 'SENAI' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_hotseat_tecnologia_gestao',
+    category: 'Hotseat',
+    title: 'Hotseat: Tecnologia resolve gestão?',
+    summary: 'Aprendendo com quem constrói empresas no ecossistema: "Tecnologia resolve gestão? Os limites entre ferramenta, processo e cultura nas empresas do Agreste."',
+    venue: 'Sala de Economia Criativa 01',
+    audience: 'Empresarios, gestores e consultores',
+    startTime: '14:00',
+    endTime: '14:45',
+    accent: '#ec4899',
+    mapQuery: 'sala de economia criativa 01',
+    speakers: [
+      { name: 'Pamela Rita', role: 'Tapioca Valley' },
+      { name: 'Arthur Bessone', role: 'Tapioca Valley' },
+      { name: 'Felipe Belone', role: 'Tapioca Valley' },
+      { name: 'Fabio Moura', role: 'CaruaHub' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_hotseat_ecossistema_pratica',
+    category: 'Hotseat',
+    title: 'Hotseat: Ecossistema na prática',
+    summary: 'Aprendendo com quem constrói empresas no ecossistema: "Ecossistema na prática: como empresas, especialistas e empreendedores podem resolver gargalos estruturais de forma colaborativa."',
+    venue: 'Sala de Economia Criativa 02',
+    audience: 'Empreendedores e articuladores do ecossistema',
+    startTime: '14:00',
+    endTime: '14:45',
+    accent: '#e11d48',
+    mapQuery: 'sala de economia criativa 02',
+    speakers: [
+      { name: 'Hildegard Assis', role: 'Tapioca Valley' },
+      { name: 'Pamela Dias', role: 'Tapioca Valley' },
+      { name: 'Inacio Ferreira', role: 'CaruaHub' },
+      { name: 'Ana Amorim', role: 'Varejo Venture' },
+    ],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_palestra_ian_rochlin',
+    category: 'Palco Principal',
+    title: 'Palestra: De uma Comunidade Global de Games ao Shark Tank',
+    summary: 'Ian Freitas Rochlin compartilha a trajetoria de uma comunidade global de games ate o Shark Tank.',
+    venue: 'Palco Principal',
+    audience: 'Games, criadores e startups',
+    startTime: '15:00',
+    endTime: '16:00',
+    accent: '#9333ea',
+    linkedPoiId: 'palco_principal',
+    speakers: [{ name: 'Ian Freitas Rochlin', role: 'Palestrante' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_jornada_inove_ai',
+    category: 'Palco Principal',
+    title: 'Painel: II Jornada INOVE AI',
+    summary: 'Apresentação dos pitches dos squads semifinalistas do projeto, compondo a II Jornada INOVE AI no palco principal.',
+    venue: 'Palco Principal',
+    audience: 'Educação, inovação e investidores',
+    startTime: '16:00',
+    endTime: '17:00',
+    accent: '#7c2d12',
+    linkedPoiId: 'palco_principal',
+    speakers: [{ name: 'Squads semifinalistas', role: 'Apresentação dos pitches do projeto' }],
+  }),
+  createAgendaSession({
+    id: 'agenda_21_encerramento',
+    category: 'Palco Principal',
+    title: 'Encerramento',
+    summary: 'Fechamento oficial do sábado 21 no palco principal, com orientações finais ao público e encerramento do evento.',
+    venue: 'Palco Principal',
+    audience: 'Público geral',
+    startTime: '17:00',
+    endTime: '17:15',
+    accent: '#b45309',
+    linkedPoiId: 'palco_principal',
+    speakers: [{ name: 'Organização Gnostart', role: 'Fechamento' }],
+  }),
+];
+
 type EditingPoi = Partial<PointData>;
+type AdminWorkspaceSnapshot = {
+  pois: PointData[];
+  draftPoiIds: string[];
+  updatedAt: string;
+};
+
+type InitialPoiRuntimeState = {
+  pois: PointData[];
+  source: PoiDataSource;
+  draftPoiIds: string[];
+};
+type TapIndicator = {
+  id: number;
+  x: number;
+  y: number;
+};
+
+type ImagePoint = {
+  x: number;
+  y: number;
+};
+
+type LiveTrackingState = 'idle' | 'requesting' | 'active' | 'blocked' | 'unsupported' | 'error';
+type LiveLocationSource = 'gps' | 'mock';
+
+type LiveLocationState = {
+  lat: number;
+  lng: number;
+  x: number;
+  y: number;
+  accuracyMeters: number;
+  capturedAt: number;
+  isInsideEvent: boolean;
+  snappedNodeId: string | null;
+  nearestPoiId: string | null;
+};
 
 const createIcon = (label: string, color: string, size = 30, isHighlighted = false) =>
   new L.DivIcon({
@@ -87,46 +498,6 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-
-const hslToHex = (h: number, s: number, l: number) => {
-  const hue = ((h % 360) + 360) % 360;
-  const saturation = Math.max(0, Math.min(100, s)) / 100;
-  const lightness = Math.max(0, Math.min(100, l)) / 100;
-  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
-  const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
-  const m = lightness - chroma / 2;
-
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  if (hue < 60) {
-    r = chroma;
-    g = x;
-  } else if (hue < 120) {
-    r = x;
-    g = chroma;
-  } else if (hue < 180) {
-    g = chroma;
-    b = x;
-  } else if (hue < 240) {
-    g = x;
-    b = chroma;
-  } else if (hue < 300) {
-    r = x;
-    b = chroma;
-  } else {
-    r = chroma;
-    b = x;
-  }
-
-  const toHex = (value: number) => {
-    const rounded = Math.round((value + m) * 255);
-    const clamped = Math.max(0, Math.min(255, rounded));
-    return clamped.toString(16).padStart(2, '0');
-  };
-
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-};
 
 const hexToRgb = (value: string) => {
   const sanitized = value.replace('#', '').trim();
@@ -164,26 +535,9 @@ const normalizeHexColor = (value?: string) => {
   return undefined;
 };
 
-const hashString = (value: string) => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-  }
-  return hash;
-};
-
-const getHashedAccentColor = (poi: PointData) => {
-  const typeHueMap: Record<PoiType, number> = {
-    atividade: 24,
-    servico: 265,
-    banheiro: 198,
-    entrada: 135,
-  };
-  const seed = hashString(`${poi.id}:${poi.nome}:${poi.tipo}`);
-  const hue = (typeHueMap[poi.tipo] + (seed % 58) - 29 + 360) % 360;
-  const saturation = 70 + (seed % 14);
-  const lightness = 44 + (seed % 9);
-  return hslToHex(hue, saturation, lightness);
+const isBrandPaletteColor = (value?: string) => {
+  const normalized = normalizeHexColor(value);
+  return normalized ? BRAND_PALETTE.has(normalized) : false;
 };
 
 const normalizeBadgeText = (value?: string) => {
@@ -200,14 +554,21 @@ const getPoiBadgeText = (poi: PointData) => {
   return fallback || 'P';
 };
 
-const getPoiAccentColor = (poi: PointData) => normalizeHexColor(poi.corDestaque) ?? getHashedAccentColor(poi);
+const getPoiAccentColor = (poi: PointData) => {
+  const customAccent = normalizeHexColor(poi.corDestaque);
+  if (customAccent && isBrandPaletteColor(customAccent)) {
+    return customAccent;
+  }
+
+  return poiTypeAccentMap[poi.tipo];
+};
 
 const getPoiPalette = (poi: PointData) => {
   const accent = getPoiAccentColor(poi);
   return {
     accent,
-    from: mixColors(accent, '#ffffff', 0.17),
-    to: mixColors(accent, '#111827', 0.2),
+    from: mixColors(accent, BRAND_COLORS.surface, 0.17),
+    to: mixColors(accent, BRAND_COLORS.ink, 0.2),
   };
 };
 
@@ -235,7 +596,7 @@ const poiIconCache = new Map<string, L.DivIcon>();
 const getPoiIcon = (poi: PointData, isHighlighted = false) => {
   const palette = getPoiPalette(poi);
   const badgeText = getPoiBadgeText(poi);
-  const accentForBadge = mixColors(palette.accent, '#020617', 0.14);
+  const accentForBadge = mixColors(palette.accent, BRAND_COLORS.ink, 0.14);
   const size = isHighlighted ? 46 : 36;
   const cacheKey = `${poi.id}|${poi.tipo}|${palette.from}|${palette.to}|${accentForBadge}|${badgeText}|${size}|${isHighlighted ? 1 : 0}`;
   const cached = poiIconCache.get(cacheKey);
@@ -255,41 +616,129 @@ const getPoiIcon = (poi: PointData, isHighlighted = false) => {
 };
 
 const stateIcons = {
-  novo: createIcon('+', '#ef4444', 22),
-  origem: createIcon('O', '#0ea5e9', 40, true),
-  destino: createIcon('D', '#f43f5e', 40, true),
+  novo: createIcon('+', BRAND_COLORS.highlight, 22),
+  origem: createIcon('O', BRAND_COLORS.primary, 40, true),
+  destino: createIcon('D', BRAND_COLORS.ink, 40, true),
 };
 
 const MAP_WIDTH = MAP_PIXEL_WIDTH;
 const MAP_HEIGHT = MAP_PIXEL_HEIGHT;
-const MAP_DEFAULT_ZOOM = 19.4;
-const MAP_MIN_ZOOM = 16.3;
+const MAP_DEFAULT_ZOOM = 18.5;
+const MAP_MOBILE_DEFAULT_ZOOM = 18.2;
+const MAP_MIN_ZOOM = 16.9;
 const MAP_MAX_ZOOM = 20;
-const MAP_INTRO_ZOOM = 16.9;
-const MAP_INTRO_DURATION_MS = 1000;
+const PINS_VISIBILITY_MIN_ZOOM = 17.55;
+const ROUTE_REVEAL_MIN_DURATION_MS = 900;
+const ROUTE_REVEAL_MAX_DURATION_MS = 1800;
+const ROUTE_REVEAL_MS_PER_METER = 7;
+const PRESENTATION_WALKER_MIN_DURATION_MS = 2500;
+const PRESENTATION_WALKER_MAX_DURATION_MS = 5200;
+const PRESENTATION_WALKER_MS_PER_METER = 16;
+const TAP_FEEDBACK_DURATION_MS = 560;
+const TAP_FEEDBACK_MAX_MOVE_PX = 12;
+const DEFAULT_MAP_BACKGROUND_URL = '/maps/mapa-background.jpeg';
+const DEFAULT_MAP_OVERLAY_URL = import.meta.env.VITE_MAP_OVERLAY_URL || '/maps/mapa-visual.png';
 const BASEMAP_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const BASEMAP_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
-const mapBounds = new L.LatLngBounds([MAP_SOUTH, MAP_WEST], [MAP_NORTH, MAP_EAST]);
+const MAP_BACKGROUND_PADDING_RATIO = {
+  north: 3,
+  south: 5,
+  east: 3.4,
+  west: 3,
+} as const;
+const MAP_LAT_SPAN = MAP_NORTH - MAP_SOUTH;
+const MAP_LNG_SPAN = MAP_EAST - MAP_WEST;
+const mapBackgroundBounds = new L.LatLngBounds(
+  [MAP_SOUTH - MAP_LAT_SPAN * MAP_BACKGROUND_PADDING_RATIO.south, MAP_WEST - MAP_LNG_SPAN * MAP_BACKGROUND_PADDING_RATIO.west],
+  [MAP_NORTH + MAP_LAT_SPAN * MAP_BACKGROUND_PADDING_RATIO.north, MAP_EAST + MAP_LNG_SPAN * MAP_BACKGROUND_PADDING_RATIO.east],
+);
+const mapOverlayBounds = new L.LatLngBounds(
+  [MAP_OVERLAY_SOUTH, MAP_OVERLAY_WEST],
+  [MAP_OVERLAY_NORTH, MAP_OVERLAY_EAST],
+);
 const AVERAGE_WALKING_SPEED_MPS = 1.4;
 const WALKER_PROGRESS_UPDATE_MS = 250;
 
 const imageToLatLng = (x: number, y: number): [number, number] => {
-  const latSpan = MAP_NORTH - MAP_SOUTH;
-  const lngSpan = MAP_EAST - MAP_WEST;
-  const lat = MAP_NORTH - (y / MAP_HEIGHT) * latSpan;
-  const lng = MAP_WEST + (x / MAP_WIDTH) * lngSpan;
+  const latSpan = MAP_OVERLAY_NORTH - MAP_OVERLAY_SOUTH;
+  const lngSpan = MAP_OVERLAY_EAST - MAP_OVERLAY_WEST;
+  const lat = MAP_OVERLAY_NORTH - (y / MAP_HEIGHT) * latSpan;
+  const lng = MAP_OVERLAY_WEST + (x / MAP_WIDTH) * lngSpan;
   return [lat, lng];
 };
 
-const latLngToImage = (lat: number, lng: number): { x: number; y: number } => {
-  const latSpan = MAP_NORTH - MAP_SOUTH;
-  const lngSpan = MAP_EAST - MAP_WEST;
-  const xRatio = (lng - MAP_WEST) / lngSpan;
-  const yRatio = (MAP_NORTH - lat) / latSpan;
+const projectLatLngToImage = (lat: number, lng: number, clampToMap = true): { x: number; y: number } => {
+  const latSpan = MAP_OVERLAY_NORTH - MAP_OVERLAY_SOUTH;
+  const lngSpan = MAP_OVERLAY_EAST - MAP_OVERLAY_WEST;
+  const xRatio = (lng - MAP_OVERLAY_WEST) / lngSpan;
+  const yRatio = (MAP_OVERLAY_NORTH - lat) / latSpan;
+
+  const x = xRatio * MAP_WIDTH;
+  const y = yRatio * MAP_HEIGHT;
+
+  if (!clampToMap) {
+    return { x, y };
+  }
+
   return {
-    x: Math.max(0, Math.min(MAP_WIDTH, xRatio * MAP_WIDTH)),
-    y: Math.max(0, Math.min(MAP_HEIGHT, yRatio * MAP_HEIGHT)),
+    x: Math.max(0, Math.min(MAP_WIDTH, x)),
+    y: Math.max(0, Math.min(MAP_HEIGHT, y)),
   };
+};
+
+const latLngToImage = (lat: number, lng: number) => projectLatLngToImage(lat, lng, true);
+const latLngToImageRaw = (lat: number, lng: number) => projectLatLngToImage(lat, lng, false);
+const eventBoundaryLatLngPoints = EVENT_BOUNDARY_IMAGE_POINTS.map((point) => imageToLatLng(point.x, point.y));
+
+const getImagePointDistance = (from: ImagePoint, to: ImagePoint) => Math.hypot(from.x - to.x, from.y - to.y);
+
+const isPointInsidePolygon = (point: ImagePoint, polygon: ImagePoint[]) => {
+  let isInside = false;
+
+  for (
+    let currentIndex = 0, previousIndex = polygon.length - 1;
+    currentIndex < polygon.length;
+    previousIndex = currentIndex, currentIndex += 1
+  ) {
+    const currentPoint = polygon[currentIndex];
+    const previousPoint = polygon[previousIndex];
+
+    const intersects =
+      currentPoint.y > point.y !== previousPoint.y > point.y &&
+      point.x <
+        ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) /
+          ((previousPoint.y - currentPoint.y) || Number.EPSILON) +
+          currentPoint.x;
+
+    if (intersects) {
+      isInside = !isInside;
+    }
+  }
+
+  return isInside;
+};
+
+const formatClockTimeLabel = (timestamp: number) =>
+  new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(timestamp);
+
+const mapGeolocationErrorMessage = (error: GeolocationPositionError) => {
+  if (error.code === error.PERMISSION_DENIED) {
+    return 'A permissão de localização foi negada. Libere o GPS no navegador para usar a origem automática.';
+  }
+
+  if (error.code === error.POSITION_UNAVAILABLE) {
+    return 'Não conseguimos ler sua posição agora. Confira o GPS do celular e tente novamente.';
+  }
+
+  if (error.code === error.TIMEOUT) {
+    return 'O GPS demorou mais do que o esperado para responder. Tente novamente em um local aberto.';
+  }
+
+  return 'Não foi possível iniciar a localização em tempo real.';
 };
 
 const toRadians = (value: number) => (value * Math.PI) / 180;
@@ -336,6 +785,19 @@ const formatWalkingTimeLabel = (minutes: number) => {
   return `${rounded} min`;
 };
 
+const easeInOutCubic = (value: number) =>
+  value < 0.5 ? 4 * value ** 3 : 1 - ((-2 * value + 2) ** 3) / 2;
+
+const getAdaptiveAnimationDuration = (
+  distanceMeters: number,
+  minDurationMs: number,
+  maxDurationMs: number,
+  msPerMeter: number,
+) => {
+  if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) return minDurationMs;
+  return Math.min(maxDurationMs, Math.max(minDurationMs, distanceMeters * msPerMeter));
+};
+
 const getPointAlongPath = (positions: [number, number][], progress: number): [number, number] => {
   if (positions.length === 0) return [MAP_CENTER[0], MAP_CENTER[1]];
   if (positions.length === 1) return positions[0];
@@ -368,16 +830,66 @@ const getPointAlongPath = (positions: [number, number][], progress: number): [nu
 
   return positions[positions.length - 1];
 };
+
+const getPathSliceUntilProgress = (positions: [number, number][], progress: number): [number, number][] => {
+  if (positions.length === 0) return [];
+  if (positions.length === 1) return positions;
+
+  const clampedProgress = Math.max(0, Math.min(1, progress));
+  if (clampedProgress <= 0) return [positions[0]];
+  if (clampedProgress >= 1) return positions;
+
+  const segmentDistances: number[] = [];
+  let totalDistance = 0;
+  for (let i = 1; i < positions.length; i += 1) {
+    const distance = getLatLngDistanceMeters(positions[i - 1], positions[i]);
+    segmentDistances.push(distance);
+    totalDistance += distance;
+  }
+
+  if (totalDistance <= 0) return positions;
+
+  const targetDistance = totalDistance * clampedProgress;
+  let coveredDistance = 0;
+  const revealedPath: [number, number][] = [positions[0]];
+
+  for (let i = 1; i < positions.length; i += 1) {
+    const segmentDistance = segmentDistances[i - 1];
+    if (coveredDistance + segmentDistance >= targetDistance) {
+      const ratio = segmentDistance > 0 ? (targetDistance - coveredDistance) / segmentDistance : 0;
+      const [startLat, startLng] = positions[i - 1];
+      const [endLat, endLng] = positions[i];
+      revealedPath.push([startLat + (endLat - startLat) * ratio, startLng + (endLng - startLng) * ratio]);
+      return revealedPath;
+    }
+
+    revealedPath.push(positions[i]);
+    coveredDistance += segmentDistance;
+  }
+
+  return positions;
+};
 const MAX_DEFAULT_VISIBLE_PINS = 20;
 const POI_ACCESS_STORAGE_KEY = 'gnostart.poiAccessCount';
+const POI_RUNTIME_BACKUP_STORAGE_KEY = 'gnostart.poiRuntimeBackup';
+const ADMIN_POI_WORKSPACE_STORAGE_KEY = 'gnostart.adminPoiWorkspace';
 const TUTORIAL_STORAGE_KEY = 'gnostart.mapTutorialSeen';
 const MOBILE_MEDIA_QUERY = '(max-width: 900px)';
+const COMPACT_MEDIA_QUERY = '(max-width: 1180px), (max-height: 760px)';
 const PRESENTATION_MODE_QUERY_KEY = 'modo';
 const PRESENTATION_MODE_DEFAULT = true;
 const POI_DATA_EXPORT_FILENAME = 'locais_evento_social.json';
 const EVENT_NAME = 'GNOSTART';
 const EVENT_LABEL = `Evento ${EVENT_NAME}`;
 const FRONT_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3333';
+const LIVE_LOCATION_NODE_MAX_DISTANCE = 92;
+const LIVE_LOCATION_NEAREST_POI_MAX_DISTANCE = 180;
+const LIVE_LOCATION_WARNING_ACCURACY_METERS = 35;
+const LIVE_LOCATION_WATCH_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  maximumAge: 5000,
+  timeout: 12000,
+};
 
 const getPresentationModeFromQuery = () => {
   if (typeof window === 'undefined') return PRESENTATION_MODE_DEFAULT;
@@ -409,14 +921,14 @@ const defaultPoiImages: Record<PoiType, string> = {
 
 const poiTypeLabels: Record<PoiType, string> = {
   atividade: 'Atividades',
-  servico: 'Servicos',
+  servico: 'Serviços',
   banheiro: 'Banheiros',
   entrada: 'Entradas',
 };
 
 const poiTypeSingularLabels: Record<PoiType, string> = {
   atividade: 'Atividade',
-  servico: 'Servico',
+  servico: 'Serviço',
   banheiro: 'Banheiro',
   entrada: 'Entrada',
 };
@@ -424,123 +936,147 @@ const poiTypeSingularLabels: Record<PoiType, string> = {
 const tutorialSteps = [
   {
     title: 'Bem-vindo(a) ao mapa',
-    text: 'Arraste o botao de acoes para cima e abra Pins ou Rota quando precisar.',
+    text: 'Puxe a alça de ações para cima ou toque em um atalho para abrir Agenda, Locais e Rotas.',
   },
   {
     title: 'Encontre os pontos do evento',
-    text: 'No painel Pins, pesquise por atividades, servicos e acessos. Toque em Ver para abrir detalhes.',
+    text: 'No painel Locais, pesquise por atividades, serviços e acessos. Toque em Ver para abrir detalhes.',
   },
   {
     title: 'Trace rotas em segundos',
-    text: 'No painel Rota, defina origem e destino. As sugestoes aparecem enquanto voce escreve.',
+    text: 'No painel Rotas, defina origem e destino. As sugestões aparecem enquanto você digita.',
   },
   {
-    title: 'Acompanhe sua circulacao',
-    text: 'Toque em um pin e use Tracar rota ate aqui para navegar pelas areas permitidas.',
+    title: 'Acompanhe sua circulação',
+    text: 'Toque em um ponto e use Traçar rota até aqui para navegar pelas áreas permitidas.',
   },
 ] as const;
+
+const parseAgendaTimeToMinutes = (timeLabel: string) => {
+  const [hours, minutes] = timeLabel.split(':').map((value) => Number.parseInt(value, 10));
+  return hours * 60 + minutes;
+};
+
+const formatAgendaDuration = (startTime: string, endTime: string) => {
+  const durationMinutes = Math.max(0, parseAgendaTimeToMinutes(endTime) - parseAgendaTimeToMinutes(startTime));
+  const hours = Math.floor(durationMinutes / 60);
+  const minutes = durationMinutes % 60;
+
+  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}min`;
+  if (hours > 0) return `${hours}h`;
+  return `${minutes}min`;
+};
 
 const rawInitialPois: PointData[] = [
   {
     id: 'entrada_principal',
     nome: 'Entrada Principal',
     tipo: 'entrada',
-    x: 1034,
-    y: 850,
+    x: 1049,
+    y: 748,
     descricao: 'Acesso principal do evento social.',
     imagemUrl: '/images/pois/indicadores/entrada.svg',
-    corDestaque: '#16a34a',
+    corDestaque: BRAND_COLORS.highlight,
     selo: 'EP',
+    nodeId: '1005_630',
   },
   {
     id: 'recepcao_credenciamento',
-    nome: 'Recepcao e Credenciamento',
+    nome: 'Recepção e Credenciamento',
     tipo: 'servico',
-    x: 360,
-    y: 800,
+    x: 861,
+    y: 685,
     descricao: 'Retirada de pulseiras e apoio inicial.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
     contato: '(81) 99999-1010',
-    corDestaque: '#2563eb',
+    corDestaque: BRAND_COLORS.ink,
     selo: 'RC',
+    nodeId: '825_570',
   },
   {
     id: 'palco_principal',
     nome: 'Palco Principal',
     tipo: 'atividade',
-    x: 1420,
-    y: 240,
-    descricao: 'Programacao principal do evento.',
+    x: 1375,
+    y: 331,
+    descricao: 'Programação principal do evento.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: '#ea580c',
+    corDestaque: BRAND_COLORS.primary,
     selo: 'PAL',
+    nodeId: '1305_285',
   },
   {
     id: 'lounge_convivio',
-    nome: 'Lounge de Convivio',
+    nome: 'Lounge de Convívio',
     tipo: 'atividade',
-    x: 750,
-    y: 524,
-    descricao: 'Espaco para descanso e networking.',
+    x: 350,
+    y: 704,
+    descricao: 'Espaço para descanso e networking.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: '#b45309',
+    corDestaque: BRAND_COLORS.primaryStrong,
     selo: 'LNG',
+    nodeId: '330_585',
   },
   {
     id: 'espaco_fotos',
-    nome: 'Espaco de Fotos',
+    nome: 'Espaço de Fotos',
     tipo: 'atividade',
-    x: 830,
-    y: 230,
-    descricao: 'Area cenografica para fotos.',
+    x: 1440,
+    y: 711,
+    descricao: 'Área cenográfica para fotos.',
     imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: '#db2777',
+    corDestaque: BRAND_COLORS.primarySoft,
     selo: 'FTO',
+    nodeId: '1380_600',
   },
   {
     id: 'area_alimentacao',
-    nome: 'Area de Alimentacao',
+    nome: 'Área de Alimentação',
     tipo: 'servico',
-    x: 1270,
-    y: 800,
-    descricao: 'Ponto de alimentacao e bebidas.',
+    x: 835,
+    y: 284,
+    descricao: 'Ponto de alimentação e bebidas.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: '#0d9488',
+    corDestaque: BRAND_COLORS.inkSoft,
     selo: 'ALI',
+    nodeId: '795_270',
   },
   {
     id: 'posto_apoio',
     nome: 'Posto de Apoio',
     tipo: 'servico',
-    x: 410,
-    y: 400,
-    descricao: 'Informacoes e apoio ao participante.',
+    x: 426,
+    y: 315,
+    descricao: 'Informações e apoio ao participante.',
     imagemUrl: '/images/pois/indicadores/apoio.svg',
     contato: '(81) 99999-2020',
-    corDestaque: '#4338ca',
+    corDestaque: BRAND_COLORS.primaryStrong,
     selo: 'SOS',
+    nodeId: '405_255',
   },
   {
     id: 'banheiro_social',
     nome: 'Banheiro Social',
     tipo: 'banheiro',
-    x: 1170,
-    y: 100,
-    descricao: 'Banheiro de apoio ao publico.',
+    x: 1163,
+    y: 149,
+    descricao: 'Banheiro de apoio ao público.',
     imagemUrl: '/images/pois/indicadores/banheiro.svg',
-    corDestaque: '#0284c7',
+    corDestaque: BRAND_COLORS.primarySoft,
     selo: 'WC',
+    nodeId: '1110_120',
   },
   {
     id: 'saida_lateral',
-    nome: 'Entrada 2',
+    nome: 'Saída Lateral',
     tipo: 'entrada',
-    x: 664,
-    y: 150,
-    descricao: 'Entrada secundaria para fluxo de evacuacao.',
+    x: 658,
+    y: 83,
+    descricao: 'Entrada secundária para fluxo de evacuação.',
     imagemUrl: '/images/pois/indicadores/entrada.svg',
-    corDestaque: '#15803d',
+    corDestaque: BRAND_COLORS.highlight,
     selo: 'S2',
+    nodeId: '630_75',
   },
 ];
 
@@ -571,31 +1107,168 @@ const toPoiApiPayload = (
   nodeId: poi.nodeId,
 });
 
-const normalizeContact = (value?: string) => value?.trim() ?? '';
-const toContactLink = (contact?: string) => {
-  const normalized = normalizeContact(contact);
-  if (!normalized) return null;
-  if (/^https?:\/\//i.test(normalized)) return normalized;
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return `mailto:${normalized}`;
-  const digits = normalized.replace(/\D/g, '');
-  if (digits) return `https://wa.me/${digits}`;
-  return null;
+const isPoiType = (value: unknown): value is PoiType =>
+  value === 'atividade' || value === 'servico' || value === 'banheiro' || value === 'entrada';
+
+const sanitizeStoredPoi = (value: unknown): PointData | null => {
+  if (!value || typeof value !== 'object') return null;
+
+  const candidate = value as Record<string, unknown>;
+  const x = typeof candidate.x === 'number' ? candidate.x : Number(candidate.x);
+  const y = typeof candidate.y === 'number' ? candidate.y : Number(candidate.y);
+
+  if (
+    typeof candidate.id !== 'string' ||
+    typeof candidate.nome !== 'string' ||
+    !isPoiType(candidate.tipo) ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y)
+  ) {
+    return null;
+  }
+
+  return attachNearestNode({
+    id: candidate.id,
+    nome: candidate.nome.trim(),
+    tipo: candidate.tipo,
+    x,
+    y,
+    descricao: typeof candidate.descricao === 'string' ? candidate.descricao : undefined,
+    imagemUrl: typeof candidate.imagemUrl === 'string' ? candidate.imagemUrl : undefined,
+    contato: typeof candidate.contato === 'string' ? candidate.contato : undefined,
+    corDestaque: typeof candidate.corDestaque === 'string' ? candidate.corDestaque : undefined,
+    selo: typeof candidate.selo === 'string' ? candidate.selo : undefined,
+    nodeId: typeof candidate.nodeId === 'string' ? candidate.nodeId : undefined,
+  });
 };
-const normalizeForSearch = (value: string) =>
-  value
-    .toLowerCase()
+
+const parseStoredPoiList = (value: unknown) =>
+  (Array.isArray(value) ? value.map(sanitizeStoredPoi).filter(Boolean) : []) as PointData[];
+
+const getFrontSeedPois = () => {
+  const importedSeedPois = parseStoredPoiList(rawInitialPoisSeed);
+  return importedSeedPois.length > 0 ? importedSeedPois : rawInitialPois.map(attachNearestNode);
+};
+
+const loadPoiRuntimeBackup = (): PointData[] => {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const rawValue = window.localStorage.getItem(POI_RUNTIME_BACKUP_STORAGE_KEY);
+    if (!rawValue) return [];
+    return parseStoredPoiList(JSON.parse(rawValue));
+  } catch {
+    return [];
+  }
+};
+
+const persistPoiRuntimeBackup = (value: PointData[]) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(POI_RUNTIME_BACKUP_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Ignora erro de storage para não interromper o mapa.
+  }
+};
+
+const loadAdminWorkspaceSnapshot = (): AdminWorkspaceSnapshot | null => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const rawValue = window.localStorage.getItem(ADMIN_POI_WORKSPACE_STORAGE_KEY);
+    if (!rawValue) return null;
+
+    const parsed = JSON.parse(rawValue) as Partial<AdminWorkspaceSnapshot>;
+    const pois = parseStoredPoiList(parsed?.pois);
+    if (pois.length === 0) return null;
+
+    const validPoiIds = new Set(pois.map((poi) => poi.id));
+    const draftPoiIds = Array.isArray(parsed?.draftPoiIds)
+      ? parsed.draftPoiIds.filter((id): id is string => typeof id === 'string' && validPoiIds.has(id))
+      : [];
+
+    return {
+      pois,
+      draftPoiIds,
+      updatedAt: typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const persistAdminWorkspaceSnapshot = (value: AdminWorkspaceSnapshot) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(ADMIN_POI_WORKSPACE_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Ignora erro de storage para não interromper o admin.
+  }
+};
+
+const clearAdminWorkspaceSnapshot = () => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.removeItem(ADMIN_POI_WORKSPACE_STORAGE_KEY);
+  } catch {
+    // Ignora erro de storage para não interromper o admin.
+  }
+};
+
+const getInitialPoiRuntimeState = (): InitialPoiRuntimeState => {
+  const workspaceSnapshot = loadAdminWorkspaceSnapshot();
+  if (workspaceSnapshot) {
+    return {
+      pois: workspaceSnapshot.pois,
+      source: 'local-workspace',
+      draftPoiIds: workspaceSnapshot.draftPoiIds,
+    };
+  }
+
+  const runtimeBackup = loadPoiRuntimeBackup();
+  if (runtimeBackup.length > 0) {
+    return {
+      pois: runtimeBackup,
+      source: 'local-backup',
+      draftPoiIds: [],
+    };
+  }
+
+  return {
+    pois: getFrontSeedPois(),
+    source: 'front-seed',
+    draftPoiIds: [],
+  };
+};
+
+const upsertPoiInCollection = (collection: PointData[], nextPoi: PointData) => {
+  const index = collection.findIndex((item) => item.id === nextPoi.id);
+  if (index === -1) return [...collection, nextPoi];
+
+  const nextCollection = [...collection];
+  nextCollection[index] = nextPoi;
+  return nextCollection;
+};
+
+const normalizeContact = (value?: string) => value?.trim() ?? '';
+const normalizeForSearch = (value?: string) =>
+  (value ?? '')
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 
 const loadPoiAccessCount = (): PoiAccessCount => {
   if (typeof window === 'undefined') return {};
 
   try {
-    const raw = window.localStorage.getItem(POI_ACCESS_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as PoiAccessCount;
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed;
+    const rawValue = window.localStorage.getItem(POI_ACCESS_STORAGE_KEY);
+    if (!rawValue) return {};
+    const parsed = JSON.parse(rawValue) as PoiAccessCount;
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
   }
@@ -607,7 +1280,7 @@ const persistPoiAccessCount = (value: PoiAccessCount) => {
   try {
     window.localStorage.setItem(POI_ACCESS_STORAGE_KEY, JSON.stringify(value));
   } catch {
-    // Ignora erro de storage para nao quebrar a UX.
+    // Ignora erro de storage para não quebrar a UX.
   }
 };
 
@@ -616,23 +1289,30 @@ const getPoiGalleryImages = (poi: PointData) => {
 };
 
 const MapController = ({
-  focusPoint,
-  isMobile,
+  routeLatLngPoints,
+  onRouteViewportSettledChange,
 }: {
-  focusPoint: PointData | null;
-  isMobile: boolean;
+  routeLatLngPoints: [number, number][];
+  onRouteViewportSettledChange: (isSettled: boolean) => void;
 }) => {
-  const map = useMap();
+  const lastRouteKeyRef = useRef('');
 
   useEffect(() => {
-    if (focusPoint) {
-      map.stop();
-      map.flyTo(imageToLatLng(focusPoint.x, focusPoint.y), MAP_DEFAULT_ZOOM, {
-        duration: isMobile ? 0.55 : 1.05,
-        easeLinearity: 0.25,
-      });
+    if (routeLatLngPoints.length < 2) {
+      lastRouteKeyRef.current = '';
+      onRouteViewportSettledChange(true);
+      return;
     }
-  }, [focusPoint, map, isMobile]);
+
+    const routeKey = routeLatLngPoints
+      .map(([lat, lng]) => `${lat.toFixed(6)},${lng.toFixed(6)}`)
+      .join('|');
+
+    if (routeKey === lastRouteKeyRef.current) return;
+
+    lastRouteKeyRef.current = routeKey;
+    onRouteViewportSettledChange(true);
+  }, [routeLatLngPoints, onRouteViewportSettledChange]);
 
   return null;
 };
@@ -665,52 +1345,47 @@ const MapSizeSync = () => {
   return null;
 };
 
-const MapIntroAnimation = ({ isActive, onComplete }: { isActive: boolean; onComplete: () => void }) => {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!isActive) return;
-    if (typeof window === 'undefined') {
-      onComplete();
-      return;
-    }
-
-    map.stop();
-    map.setView(MAP_CENTER, MAP_INTRO_ZOOM, { animate: false });
-    map.flyTo(MAP_CENTER, MAP_DEFAULT_ZOOM, {
-      duration: MAP_INTRO_DURATION_MS / 1000,
-      easeLinearity: 0.25,
-    });
-
-    const introTimer = window.setTimeout(() => {
-      onComplete();
-    }, MAP_INTRO_DURATION_MS + 80);
-
-    return () => {
-      window.clearTimeout(introTimer);
-    };
-  }, [isActive, map, onComplete]);
-
-  return null;
-};
-
 const ModaCenterMap = () => {
+  const [initialPoiRuntime] = useState(getInitialPoiRuntimeState);
   const [isPresentationMode] = useState(getPresentationModeFromQuery);
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia(MOBILE_MEDIA_QUERY).matches : false,
   );
+  const [isCompactViewport, setIsCompactViewport] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(COMPACT_MEDIA_QUERY).matches : false,
+  );
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false,
+  );
   const [isPinsPanelOpen, setIsPinsPanelOpen] = useState(false);
   const [isRoutePanelOpen, setIsRoutePanelOpen] = useState(false);
-  const [isActionDockExpanded, setIsActionDockExpanded] = useState(false);
+  const [isAgendaPanelOpen, setIsAgendaPanelOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isAdminAccessMenuOpen, setIsAdminAccessMenuOpen] = useState(false);
   const [adminLinkCopied, setAdminLinkCopied] = useState(false);
-  const [pois, setPois] = useState<PointData[]>(() => rawInitialPois.map(attachNearestNode));
-  const [mapOverlayUrl, setMapOverlayUrl] = useState('/maps/mapa-visual.png');
+  const [pois, setPois] = useState<PointData[]>(initialPoiRuntime.pois);
+  const [serverPois, setServerPois] = useState<PointData[]>([]);
+  const [poiDataSource, setPoiDataSource] = useState<PoiDataSource>(initialPoiRuntime.source);
+  const [draftPoiIds, setDraftPoiIds] = useState<string[]>(initialPoiRuntime.draftPoiIds);
+  const [backendSyncState, setBackendSyncState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [adminSearchTerm, setAdminSearchTerm] = useState('');
+  const [adminTypeFilter, setAdminTypeFilter] = useState<'todos' | PoiType>('todos');
+  const [adminStatusMessage, setAdminStatusMessage] = useState<string | null>(
+    initialPoiRuntime.source === 'local-workspace'
+      ? 'Edição local carregada. Revise os pontos e publique apenas quando estiver tudo certo.'
+      : null,
+  );
+  const [mapOverlayUrl, setMapOverlayUrl] = useState(DEFAULT_MAP_OVERLAY_URL);
   const [rota, setRota] = useState<number[][] | null>(null);
   const [editingPoi, setEditingPoi] = useState<EditingPoi | null>(null);
   const [focusPoint, setFocusPoint] = useState<PointData | null>(null);
   const [activePoiId, setActivePoiId] = useState<string | null>(null);
+  const [expandedPopupPoiId, setExpandedPopupPoiId] = useState<string | null>(null);
+  const [mapZoomLevel, setMapZoomLevel] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia(MOBILE_MEDIA_QUERY).matches
+      ? MAP_MOBILE_DEFAULT_ZOOM
+      : MAP_DEFAULT_ZOOM,
+  );
   const [poiAccessCount, setPoiAccessCount] = useState<PoiAccessCount>(loadPoiAccessCount);
   const [searchTerm, setSearchTerm] = useState('');
   const [enabledTypes, setEnabledTypes] = useState<Record<PoiType, boolean>>({
@@ -728,19 +1403,62 @@ const ModaCenterMap = () => {
   const [showDestinationSuggestions, setShowDestinationSuggestions] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
-  const [isMapIntroActive, setIsMapIntroActive] = useState(true);
-  const [routeMessage, setRouteMessage] = useState('Defina seu local atual e escolha o destino para começar.');
+  const [selectedAgendaDay, setSelectedAgendaDay] = useState<AgendaDayId>('21');
+  const [favoriteAgendaIds, setFavoriteAgendaIds] = useState<string[]>([]);
+  const [routeMessage, setRouteMessage] = useState('Escolha um destino e deixe o GPS preencher sua origem automaticamente.');
+  const [isRouteViewportSettled, setIsRouteViewportSettled] = useState(true);
+  const [routeRevealProgress, setRouteRevealProgress] = useState(0);
   const [walkerProgress, setWalkerProgress] = useState(0);
   const [walkerPosition, setWalkerPosition] = useState<[number, number] | null>(null);
+  const [liveTrackingState, setLiveTrackingState] = useState<LiveTrackingState>('idle');
+  const [liveLocation, setLiveLocation] = useState<LiveLocationState | null>(null);
+  const [liveLocationMessage, setLiveLocationMessage] = useState<string | null>(null);
+  const [liveLocationSource, setLiveLocationSource] = useState<LiveLocationSource | null>(null);
+  const [isLocationTestOpen, setIsLocationTestOpen] = useState(false);
+  const [testLocationLatInput, setTestLocationLatInput] = useState(() => MAP_CENTER[0].toFixed(6));
+  const [testLocationLngInput, setTestLocationLngInput] = useState(() => MAP_CENTER[1].toFixed(6));
+  const [tapIndicators, setTapIndicators] = useState<TapIndicator[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const walkerTimerRef = useRef<number | null>(null);
-  const [mobileSheetHeight, setMobileSheetHeight] = useState(0);
-  const [isMobileSheetDragging, setIsMobileSheetDragging] = useState(false);
-  const mobileSheetHeightRef = useRef(0);
-  const sheetDragStartYRef = useRef<number | null>(null);
-  const sheetDragStartHeightRef = useRef(0);
-  const actionDockDragStartYRef = useRef<number | null>(null);
-  const actionDockDragDistanceRef = useRef(0);
-  const suppressActionDockClickRef = useRef(false);
+  const routeRevealFrameRef = useRef<number | null>(null);
+  const liveLocationWatchIdRef = useRef<number | null>(null);
+  const lastLiveRouteKeyRef = useRef('');
+  const tapIndicatorIdRef = useRef(0);
+  const tapIndicatorTimeoutsRef = useRef<number[]>([]);
+  const adminImportInputRef = useRef<HTMLInputElement | null>(null);
+  const pointerGestureRef = useRef(new Map<number, { startX: number; startY: number; moved: boolean }>());
+  const lastPanelStateRef = useRef({
+    pins: false,
+    route: false,
+    agenda: false,
+    tutorial: false,
+  });
+  const activeDockPanel: DockPanel = isPinsPanelOpen ? 'pins' : isRoutePanelOpen ? 'route' : isAgendaPanelOpen ? 'agenda' : null;
+  const isDockPanelOpen = activeDockPanel !== null;
+
+  const closeDockPanel = useCallback(() => {
+    setIsPinsPanelOpen(false);
+    setIsRoutePanelOpen(false);
+    setIsAgendaPanelOpen(false);
+  }, []);
+
+  const openDockPanel = useCallback((panel: Exclude<DockPanel, null>) => {
+    setIsPinsPanelOpen(panel === 'pins');
+    setIsRoutePanelOpen(panel === 'route');
+    setIsAgendaPanelOpen(panel === 'agenda');
+    setIsTutorialOpen(false);
+  }, []);
+
+  const toggleDockPanel = useCallback(
+    (panel: Exclude<DockPanel, null>) => {
+      if (activeDockPanel === panel) {
+        closeDockPanel();
+        return;
+      }
+      openDockPanel(panel);
+    },
+    [activeDockPanel, closeDockPanel, openDockPanel],
+  );
 
   useEffect(() => {
     if (!isPresentationMode || !isAdmin) return;
@@ -774,36 +1492,385 @@ const ModaCenterMap = () => {
     }
   };
 
-  useEffect(() => {
-    let cancelled = false;
+  const playUiSound = useCallback(
+    (variant: 'tap' | 'panel' | 'route') => {
+      if (typeof window === 'undefined' || isAdmin) return;
+      if (!window.AudioContext) return;
 
-    const syncBootstrap = async () => {
-      try {
-        const bootstrap = await fetchMapBootstrap();
-        if (cancelled) return;
-
-        if (bootstrap.map?.overlayUrl?.trim()) {
-          setMapOverlayUrl(bootstrap.map.overlayUrl.trim());
-        }
-
-        if (Array.isArray(bootstrap.pois) && bootstrap.pois.length > 0) {
-          setPois(bootstrap.pois.map(fromApiPoi));
-        }
-      } catch (error) {
-        console.error('Falha ao sincronizar dados do mapa no backend:', error);
+      const context = audioContextRef.current ?? new window.AudioContext();
+      audioContextRef.current = context;
+      if (context.state === 'suspended') {
+        void context.resume().catch(() => undefined);
       }
-    };
 
-    void syncBootstrap();
+      const soundMap = {
+        tap: {
+          type: 'sine' as OscillatorType,
+          start: 880,
+          end: 640,
+          gain: 0.015,
+          duration: 0.065,
+          filter: 1650,
+        },
+        panel: {
+          type: 'triangle' as OscillatorType,
+          start: 430,
+          end: 620,
+          gain: 0.018,
+          duration: 0.11,
+          filter: 1350,
+        },
+        route: {
+          type: 'triangle' as OscillatorType,
+          start: 540,
+          end: 840,
+          gain: 0.022,
+          duration: 0.14,
+          filter: 1500,
+        },
+      };
+
+      const settings = soundMap[variant];
+      const now = context.currentTime + 0.01;
+      const oscillator = context.createOscillator();
+      const filter = context.createBiquadFilter();
+      const gain = context.createGain();
+
+      oscillator.type = settings.type;
+      oscillator.frequency.setValueAtTime(settings.start, now);
+      oscillator.frequency.exponentialRampToValueAtTime(settings.end, now + settings.duration);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(settings.filter, now);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(settings.gain, now + 0.018);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + settings.duration);
+
+      oscillator.connect(filter);
+      filter.connect(gain);
+      gain.connect(context.destination);
+
+      oscillator.start(now);
+      oscillator.stop(now + settings.duration + 0.04);
+    },
+    [isAdmin],
+  );
+
+  const stopLiveLocationTracking = useCallback(
+    (options?: { clearLocation?: boolean; keepMessage?: boolean }) => {
+      if (typeof window !== 'undefined' && liveLocationWatchIdRef.current !== null && 'geolocation' in navigator) {
+        navigator.geolocation.clearWatch(liveLocationWatchIdRef.current);
+      }
+
+      liveLocationWatchIdRef.current = null;
+      setLiveLocationSource(null);
+      setLiveTrackingState('idle');
+
+      if (options?.clearLocation !== false) {
+        setLiveLocation(null);
+      }
+
+      if (!options?.keepMessage) {
+        setLiveLocationMessage(null);
+      }
+    },
+    [],
+  );
+
+  const findNearestPoiForLiveLocation = useCallback(
+    (point: ImagePoint) => {
+      let nearestPoiId: string | null = null;
+      let nearestDistance = Infinity;
+
+      for (const poi of pois) {
+        if (!poi.nodeId) continue;
+        const distance = getImagePointDistance(point, { x: poi.x, y: poi.y });
+        if (distance < nearestDistance && distance <= LIVE_LOCATION_NEAREST_POI_MAX_DISTANCE) {
+          nearestDistance = distance;
+          nearestPoiId = poi.id;
+        }
+      }
+
+      return nearestPoiId;
+    },
+    [pois],
+  );
+
+  const applyLiveLocationSample = useCallback(
+    (
+      sample: {
+        lat: number;
+        lng: number;
+        accuracyMeters: number;
+        capturedAt: number;
+      },
+      source: LiveLocationSource,
+    ) => {
+      const rawPoint = latLngToImageRaw(sample.lat, sample.lng);
+      const isInsideEvent = isPointInsidePolygon(rawPoint, EVENT_BOUNDARY_IMAGE_POINTS);
+      const snappedNodeId = isInsideEvent
+        ? findNearestNode(Math.round(rawPoint.x), Math.round(rawPoint.y), LIVE_LOCATION_NODE_MAX_DISTANCE)
+        : null;
+      const nearestPoiId = isInsideEvent ? findNearestPoiForLiveLocation(rawPoint) : null;
+
+      setLiveLocation({
+        lat: sample.lat,
+        lng: sample.lng,
+        x: rawPoint.x,
+        y: rawPoint.y,
+        accuracyMeters: sample.accuracyMeters,
+        capturedAt: sample.capturedAt,
+        isInsideEvent,
+        snappedNodeId,
+        nearestPoiId,
+      });
+      setLiveLocationSource(source);
+      setLiveTrackingState('active');
+
+      if (!isInsideEvent) {
+        setLiveLocationMessage(
+          source === 'mock'
+            ? 'A localização de teste foi aplicada, mas caiu fora da área delimitada do evento.'
+            : 'Sua localização foi encontrada, mas está fora da área delimitada do evento.',
+        );
+        return;
+      }
+
+      if (!snappedNodeId) {
+        setLiveLocationMessage(
+          source === 'mock'
+            ? 'A localização de teste foi aplicada dentro do evento, mas ainda não encaixou na malha de rotas.'
+            : 'Sua localização foi encontrada dentro do evento, mas ainda não encaixou na malha de rotas.',
+        );
+        return;
+      }
+
+      const accuracyLabel = formatDistanceLabel(sample.accuracyMeters);
+      setLiveLocationMessage(
+        source === 'mock'
+          ? `Localização de teste aplicada com sucesso. Precisão simulada: ${accuracyLabel}.`
+          : `Sua posição está sendo atualizada automaticamente. Precisão aproximada: ${accuracyLabel}.`,
+      );
+    },
+    [findNearestPoiForLiveLocation],
+  );
+
+  const startLiveLocationTracking = useCallback(() => {
+    if (typeof window === 'undefined') return;
+
+    if (!('geolocation' in navigator)) {
+      setLiveTrackingState('unsupported');
+      setLiveLocationMessage('Este navegador não oferece geolocalização em tempo real.');
+      return;
+    }
+
+    stopLiveLocationTracking({ clearLocation: false, keepMessage: true });
+    setSelectedOriginId('');
+    setOriginQuery('');
+    setLiveTrackingState('requesting');
+    setLiveLocationMessage('Estamos buscando sua posição para preencher a origem automaticamente...');
+
+    liveLocationWatchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        applyLiveLocationSample(
+          {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            accuracyMeters: position.coords.accuracy,
+            capturedAt: position.timestamp,
+          },
+          'gps',
+        );
+      },
+      (error) => {
+        setLiveTrackingState(error.code === error.PERMISSION_DENIED ? 'blocked' : 'error');
+        setLiveLocationMessage(mapGeolocationErrorMessage(error));
+
+        if (error.code === error.PERMISSION_DENIED) {
+          setLiveLocation(null);
+          setLiveLocationSource(null);
+        }
+      },
+      LIVE_LOCATION_WATCH_OPTIONS,
+    );
+  }, [applyLiveLocationSample, stopLiveLocationTracking]);
+
+  const seedTestLocationWithEventCenter = () => {
+    setTestLocationLatInput(MAP_CENTER[0].toFixed(6));
+    setTestLocationLngInput(MAP_CENTER[1].toFixed(6));
+  };
+
+  const applyMockLocation = () => {
+    const lat = Number.parseFloat(testLocationLatInput.replace(',', '.'));
+    const lng = Number.parseFloat(testLocationLngInput.replace(',', '.'));
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setLiveTrackingState('error');
+      setLiveLocationMessage('Informe latitude e longitude válidas para aplicar a localização de teste.');
+      return;
+    }
+
+    stopLiveLocationTracking({ clearLocation: false, keepMessage: true });
+    setSelectedOriginId('');
+    setOriginQuery('');
+    applyLiveLocationSample(
+      {
+        lat,
+        lng,
+        accuracyMeters: 4,
+        capturedAt: Date.now(),
+      },
+      'mock',
+    );
+  };
+
+  const spawnTapIndicator = useCallback(
+    (x: number, y: number) => {
+      const nextId = tapIndicatorIdRef.current;
+      tapIndicatorIdRef.current += 1;
+      setTapIndicators((prev) => [...prev, { id: nextId, x, y }]);
+      playUiSound('tap');
+
+      const timeoutId = window.setTimeout(() => {
+        setTapIndicators((prev) => prev.filter((indicator) => indicator.id !== nextId));
+        tapIndicatorTimeoutsRef.current = tapIndicatorTimeoutsRef.current.filter((id) => id !== timeoutId);
+      }, TAP_FEEDBACK_DURATION_MS);
+
+      tapIndicatorTimeoutsRef.current.push(timeoutId);
+    },
+    [playUiSound],
+  );
+
+  const handleRootPointerDownCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    pointerGestureRef.current.set(event.pointerId, {
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    });
+  };
+
+  const handleRootPointerMoveCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const trackedPointer = pointerGestureRef.current.get(event.pointerId);
+    if (!trackedPointer || trackedPointer.moved) return;
+
+    const moveX = event.clientX - trackedPointer.startX;
+    const moveY = event.clientY - trackedPointer.startY;
+    if (Math.hypot(moveX, moveY) > TAP_FEEDBACK_MAX_MOVE_PX) {
+      trackedPointer.moved = true;
+    }
+  };
+
+  const handleRootPointerUpCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const trackedPointer = pointerGestureRef.current.get(event.pointerId);
+    pointerGestureRef.current.delete(event.pointerId);
+    if (!trackedPointer || trackedPointer.moved) return;
+    spawnTapIndicator(event.clientX, event.clientY);
+  };
+
+  const handleRootPointerCancelCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    pointerGestureRef.current.delete(event.pointerId);
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handleMotionPreferenceChange = () => setPrefersReducedMotion(mediaQuery.matches);
+
+    handleMotionPreferenceChange();
+    mediaQuery.addEventListener('change', handleMotionPreferenceChange);
+
+    return () => mediaQuery.removeEventListener('change', handleMotionPreferenceChange);
+  }, []);
+
+  useEffect(() => {
+    const previousState = lastPanelStateRef.current;
+    const hasPanelOpened =
+      (!previousState.pins && isPinsPanelOpen) ||
+      (!previousState.route && isRoutePanelOpen) ||
+      (!previousState.agenda && isAgendaPanelOpen) ||
+      (!previousState.tutorial && isTutorialOpen);
+
+    if (hasPanelOpened) {
+      playUiSound('panel');
+    }
+
+    lastPanelStateRef.current = {
+      pins: isPinsPanelOpen,
+      route: isRoutePanelOpen,
+      agenda: isAgendaPanelOpen,
+      tutorial: isTutorialOpen,
+    };
+  }, [isPinsPanelOpen, isRoutePanelOpen, isAgendaPanelOpen, isTutorialOpen, playUiSound]);
+
+  useEffect(() => {
     return () => {
-      cancelled = true;
+      tapIndicatorTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      tapIndicatorTimeoutsRef.current = [];
+
+      if (liveLocationWatchIdRef.current !== null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+        navigator.geolocation.clearWatch(liveLocationWatchIdRef.current);
+        liveLocationWatchIdRef.current = null;
+      }
+
+      if (routeRevealFrameRef.current !== null) {
+        window.cancelAnimationFrame(routeRevealFrameRef.current);
+      }
+
+      if (audioContextRef.current) {
+        void audioContextRef.current.close().catch(() => undefined);
+      }
     };
   }, []);
 
-  const activePoi = useMemo(
-    () => (activePoiId ? pois.find((poi) => poi.id === activePoiId) ?? null : null),
-    [activePoiId, pois],
+  const syncBootstrap = useCallback(
+    async (options?: { forceReplace?: boolean }) => {
+      try {
+        setBackendSyncState('loading');
+        const bootstrap = await fetchMapBootstrap();
+        const backendPois = Array.isArray(bootstrap.pois) ? bootstrap.pois.map(fromApiPoi) : [];
+        const nextOverlayUrl =
+          typeof bootstrap.map?.overlayUrl === 'string' && bootstrap.map.overlayUrl.trim().length > 0
+            ? bootstrap.map.overlayUrl
+            : DEFAULT_MAP_OVERLAY_URL;
+
+        setServerPois(backendPois);
+        setMapOverlayUrl(nextOverlayUrl);
+        persistPoiRuntimeBackup(backendPois);
+        setBackendSyncState('ready');
+
+        const shouldPreserveWorkspace = !options?.forceReplace && poiDataSource === 'local-workspace';
+        if (!shouldPreserveWorkspace) {
+          if (backendPois.length > 0) {
+            setPois(backendPois);
+            setPoiDataSource('backend');
+          }
+          setDraftPoiIds([]);
+          clearAdminWorkspaceSnapshot();
+        }
+
+        setAdminStatusMessage(
+          shouldPreserveWorkspace
+            ? 'Servidor sincronizado em segundo plano. Sua edição local continua ativa para revisão.'
+            : 'Dados do servidor carregados com sucesso.',
+        );
+      } catch (error) {
+        console.error('Falha ao sincronizar dados do mapa no backend:', error);
+        setBackendSyncState('error');
+        setAdminStatusMessage(
+          poiDataSource === 'local-workspace'
+            ? 'Não foi possível atualizar o servidor agora, mas sua edição local continua disponível.'
+            : 'Servidor indisponível. O mapa segue usando a base local.',
+        );
+      }
+    },
+    [poiDataSource],
   );
+
+  useEffect(() => {
+    void syncBootstrap();
+  }, [syncBootstrap]);
 
   const walkerIcon = useMemo(
     () =>
@@ -820,6 +1887,16 @@ const ModaCenterMap = () => {
     () => (rota ? rota.map(([y, x]) => imageToLatLng(x, y)) : []),
     [rota],
   );
+  const animatedRouteLatLngPoints = useMemo<[number, number][]>(
+    () => getPathSliceUntilProgress(routeLatLngPoints, routeRevealProgress),
+    [routeLatLngPoints, routeRevealProgress],
+  );
+  const visibleRouteLatLngPoints =
+    routeLatLngPoints.length > 1 && isRouteViewportSettled ? animatedRouteLatLngPoints : [];
+  const routeRevealHeadPoint =
+    visibleRouteLatLngPoints.length > 0 ? visibleRouteLatLngPoints[visibleRouteLatLngPoints.length - 1] : null;
+  const isRouteRevealComplete =
+    routeLatLngPoints.length <= 1 || prefersReducedMotion || routeRevealProgress >= 0.999;
 
   const routeDistanceMeters = useMemo(() => getPathDistanceMeters(routeLatLngPoints), [routeLatLngPoints]);
   const routeEtaMinutes = routeDistanceMeters / (AVERAGE_WALKING_SPEED_MPS * 60);
@@ -827,88 +1904,7 @@ const ModaCenterMap = () => {
     walkerProgress >= 0.995
       ? 'chegando'
       : formatWalkingTimeLabel(routeEtaMinutes * Math.max(0, 1 - walkerProgress));
-
-  const getMobileSheetBounds = useCallback(() => {
-    const viewportHeight =
-      typeof window !== 'undefined' ? Math.round(window.visualViewport?.height ?? window.innerHeight) : 780;
-    const minHeight = isMobile
-      ? Math.max(164, Math.round(viewportHeight * 0.24))
-      : Math.max(210, Math.round(viewportHeight * 0.26));
-    const maxHeight = isMobile
-      ? Math.max(minHeight + 90, Math.round(viewportHeight * 0.7))
-      : Math.max(minHeight + 130, Math.round(viewportHeight * 0.8));
-    const defaultHeight = isMobile
-      ? Math.max(minHeight, Math.min(maxHeight, Math.round(viewportHeight * 0.32)))
-      : Math.max(minHeight, Math.min(maxHeight, Math.round(viewportHeight * 0.38)));
-    return { minHeight, maxHeight, defaultHeight };
-  }, [isMobile]);
-
-  const clampMobileSheetHeight = useCallback((value: number) => {
-    const bounds = getMobileSheetBounds();
-    return Math.max(bounds.minHeight, Math.min(bounds.maxHeight, value));
-  }, [getMobileSheetBounds]);
-
-  const handleMobileSheetPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-
-    const bounds = getMobileSheetBounds();
-    const currentHeight = clampMobileSheetHeight(mobileSheetHeightRef.current || bounds.defaultHeight);
-    sheetDragStartYRef.current = event.clientY;
-    sheetDragStartHeightRef.current = currentHeight;
-    setMobileSheetHeight(currentHeight);
-    setIsMobileSheetDragging(true);
-  };
-
-  const handleActionDockPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    actionDockDragStartYRef.current = event.clientY;
-    actionDockDragDistanceRef.current = 0;
-    suppressActionDockClickRef.current = false;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handleActionDockPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (actionDockDragStartYRef.current === null) return;
-    actionDockDragDistanceRef.current = actionDockDragStartYRef.current - event.clientY;
-  };
-
-  const finalizeActionDockDrag = () => {
-    if (actionDockDragStartYRef.current === null) return;
-    const delta = actionDockDragDistanceRef.current;
-    actionDockDragStartYRef.current = null;
-    actionDockDragDistanceRef.current = 0;
-
-    if (Math.abs(delta) <= 8) return;
-
-    suppressActionDockClickRef.current = true;
-    if (delta > 0) {
-      setIsActionDockExpanded(true);
-    } else {
-      setIsActionDockExpanded(false);
-      setIsPinsPanelOpen(false);
-      setIsRoutePanelOpen(false);
-    }
-  };
-
-  const handleActionDockClick = () => {
-    if (suppressActionDockClickRef.current) {
-      suppressActionDockClickRef.current = false;
-      return;
-    }
-
-    if (isActionDockExpanded) {
-      setIsActionDockExpanded(false);
-      setIsPinsPanelOpen(false);
-      setIsRoutePanelOpen(false);
-      return;
-    }
-
-    setIsActionDockExpanded(true);
-  };
-
-  const handleMapIntroComplete = useCallback(() => {
-    setIsMapIntroActive(false);
-  }, []);
+  const arePinsHiddenByZoom = !isAdmin && mapZoomLevel < PINS_VISIBILITY_MIN_ZOOM;
 
   const orderedByAccessPois = useMemo(() => {
     return [...pois].sort((a, b) => {
@@ -976,12 +1972,66 @@ const ModaCenterMap = () => {
     return getRouteSuggestions(destinationQuery);
   }, [destinationQuery, getRouteSuggestions]);
 
+  const selectedAgendaDayMeta = useMemo(
+    () => agendaDays.find((day) => day.id === selectedAgendaDay) ?? agendaDays[0],
+    [selectedAgendaDay],
+  );
+
+  const agendaSessionsForSelectedDay = useMemo(
+    () => agendaSessions.filter((session) => session.dayId === selectedAgendaDay).sort(compareAgendaSessions),
+    [selectedAgendaDay],
+  );
+
+  const agendaDayStats = useMemo(() => {
+    if (agendaSessionsForSelectedDay.length === 0) {
+      return {
+        sessionCount: 0,
+        venueCount: 0,
+        speakerCount: 0,
+        connectedCount: 0,
+        windowLabel: '--',
+      };
+    }
+
+    const firstSession = agendaSessionsForSelectedDay[0];
+    const lastSession = agendaSessionsForSelectedDay[agendaSessionsForSelectedDay.length - 1];
+    const speakerCount = new Set(
+      agendaSessionsForSelectedDay.flatMap((session) => session.speakers.map((speaker) => speaker.name)),
+    ).size;
+    const venueCount = new Set(agendaSessionsForSelectedDay.map((session) => session.venue)).size;
+    const connectedCount = agendaSessionsForSelectedDay.filter((session) => {
+      if (session.linkedPoiId) {
+        return pois.some((poi) => poi.id === session.linkedPoiId);
+      }
+
+      const query = normalizeForSearch(session.mapQuery || session.venue);
+      return pois.some((poi) =>
+        normalizeForSearch(`${poi.nome} ${poi.descricao ?? ''} ${poi.selo ?? ''}`).includes(query),
+      );
+    }).length;
+
+    return {
+      sessionCount: agendaSessionsForSelectedDay.length,
+      venueCount,
+      speakerCount,
+      connectedCount,
+      windowLabel: `${firstSession.startTime} - ${lastSession.endTime}`,
+    };
+  }, [agendaSessionsForSelectedDay, pois]);
+
   const autoVisiblePois = useMemo(() => {
     return orderedByAccessPois.filter((poi) => enabledTypes[poi.tipo]).slice(0, MAX_DEFAULT_VISIBLE_PINS);
   }, [orderedByAccessPois, enabledTypes]);
 
   const visiblePois = useMemo(() => {
     if (isAdmin) return pois;
+
+    if (arePinsHiddenByZoom) {
+      const essentialPoiIds = new Set(
+        [activePoiId, selectedOriginId, selectedDestinationId].filter((id): id is string => Boolean(id)),
+      );
+      return pois.filter((poi) => essentialPoiIds.has(poi.id));
+    }
 
     const manualSelectionSet = new Set(manualVisiblePoiIds);
     const basePois =
@@ -1003,12 +2053,91 @@ const ModaCenterMap = () => {
     manualVisiblePoiIds,
     enabledTypes,
     autoVisiblePois,
+    arePinsHiddenByZoom,
     activePoiId,
     selectedOriginId,
     selectedDestinationId,
   ]);
 
   const getPoiById = (id: string) => pois.find((poi) => poi.id === id);
+  const liveLocationNearestPoi = useMemo(
+    () => (liveLocation?.nearestPoiId ? pois.find((poi) => poi.id === liveLocation.nearestPoiId) ?? null : null),
+    [liveLocation?.nearestPoiId, pois],
+  );
+  const hasLiveLocationFix = Boolean(liveLocation?.isInsideEvent && liveLocation?.snappedNodeId);
+  const liveLocationMarkerPosition = useMemo<[number, number] | null>(
+    () => (liveLocation ? [liveLocation.lat, liveLocation.lng] : null),
+    [liveLocation],
+  );
+  const liveLocationAccuracyLabel = liveLocation ? formatDistanceLabel(liveLocation.accuracyMeters) : null;
+  const liveLocationUpdatedAtLabel = liveLocation ? formatClockTimeLabel(liveLocation.capturedAt) : null;
+  const liveLocationOriginLabel = liveLocationNearestPoi
+    ? `Minha localização perto de ${liveLocationNearestPoi.nome}`
+    : 'Minha localização em tempo real';
+  const liveLocationStatusTone =
+    liveTrackingState === 'active' && hasLiveLocationFix
+      ? BRAND_COLORS.primary
+      : liveTrackingState === 'blocked' || liveTrackingState === 'error'
+        ? BRAND_COLORS.ink
+        : liveTrackingState === 'requesting'
+          ? BRAND_COLORS.highlight
+          : BRAND_COLORS.primarySoft;
+  const liveLocationHeadline =
+    liveTrackingState === 'active' && hasLiveLocationFix
+      ? 'Origem automática ativa'
+      : liveTrackingState === 'requesting'
+        ? 'Buscando sua localização'
+        : liveTrackingState === 'blocked'
+          ? 'Localização bloqueada'
+          : liveTrackingState === 'unsupported'
+            ? 'Geolocalização indisponível'
+            : liveTrackingState === 'error'
+              ? 'Falha no GPS'
+              : 'Ative sua localização';
+  const liveLocationStatusText =
+    liveLocationMessage ??
+    (liveTrackingState === 'idle'
+      ? 'Use o GPS do celular para preencher a origem automaticamente e acompanhar a rota em tempo real.'
+      : 'Aguardando atualizações da sua posição.');
+  const draftPoiIdSet = useMemo(() => new Set(draftPoiIds), [draftPoiIds]);
+  const filteredAdminPois = useMemo(() => {
+    const normalizedQuery = normalizeForSearch(adminSearchTerm);
+
+    return pois
+      .filter((poi) => {
+        if (adminTypeFilter !== 'todos' && poi.tipo !== adminTypeFilter) return false;
+        if (!normalizedQuery) return true;
+        return normalizeForSearch(`${poi.nome} ${poi.descricao ?? ''} ${poi.selo ?? ''} ${poi.id}`).includes(
+          normalizedQuery,
+        );
+      })
+      .sort((left, right) => {
+        const leftIsDraft = draftPoiIdSet.has(left.id);
+        const rightIsDraft = draftPoiIdSet.has(right.id);
+        if (leftIsDraft !== rightIsDraft) return leftIsDraft ? -1 : 1;
+        return left.nome.localeCompare(right.nome);
+      });
+  }, [adminSearchTerm, adminTypeFilter, draftPoiIdSet, pois]);
+  const disconnectedPoiCount = useMemo(() => pois.filter((poi) => !poi.nodeId).length, [pois]);
+  const syncedPoiCount = useMemo(() => pois.length - draftPoiIds.length, [pois.length, draftPoiIds.length]);
+
+  const autoOriginPoi = useMemo(() => {
+    if (liveLocation?.nearestPoiId) {
+      return pois.find((poi) => poi.id === liveLocation.nearestPoiId) ?? null;
+    }
+
+    return null;
+  }, [liveLocation?.nearestPoiId, pois]);
+  const routeOriginSummaryName = hasLiveLocationFix
+    ? liveLocationOriginLabel
+    : 'Aguardando sua localização exata';
+  const routeOriginSummaryHelp = hasLiveLocationFix
+    ? `Atualizada automaticamente. Última leitura às ${liveLocationUpdatedAtLabel ?? '--'}.`
+    : 'Assim que o GPS fixar sua posição, a origem será usada automaticamente.';
+  const displayedOriginQuery = hasLiveLocationFix ? liveLocationOriginLabel : originQuery;
+  const routeMetricLabel = hasLiveLocationFix ? 'Precisão GPS' : 'Progresso';
+  const routeMetricValue = hasLiveLocationFix ? liveLocationAccuracyLabel ?? '--' : `${Math.round(walkerProgress * 100)}%`;
+  const routeMarkerPosition = hasLiveLocationFix ? liveLocationMarkerPosition : walkerPosition;
 
   const clearRoute = () => {
     setSelectedOriginId('');
@@ -1018,19 +2147,46 @@ const ModaCenterMap = () => {
     setShowOriginSuggestions(false);
     setShowDestinationSuggestions(false);
     setRota(null);
-    setRouteMessage('Rota limpa. Defina seu local atual e escolha o destino.');
+    setIsRouteViewportSettled(true);
+    setRouteMessage('Rota limpa. Assim que o GPS estiver ativo, basta escolher o destino.');
   };
 
   const selectOriginPoi = (poi: PointData) => {
+    stopLiveLocationTracking();
     setSelectedOriginId(poi.id);
     setOriginQuery(poi.nome);
     setShowOriginSuggestions(false);
   };
 
-  const selectDestinationPoi = (poi: PointData) => {
+  const selectDestinationPoi = (poi: PointData, options?: { buildInstantly?: boolean }) => {
     setSelectedDestinationId(poi.id);
     setDestinationQuery(poi.nome);
     setShowDestinationSuggestions(false);
+
+    if (options?.buildInstantly === false) return;
+
+    if (hasLiveLocationFix) {
+      buildRouteFromLiveLocation(poi.id);
+      return;
+    }
+
+    if (liveTrackingState === 'requesting') {
+      setRouteMessage(`Destino definido em ${poi.nome}. Estamos aguardando sua localização para montar a rota automaticamente.`);
+      return;
+    }
+
+    if (liveTrackingState === 'active' && !hasLiveLocationFix) {
+      setRouteMessage(`Destino definido em ${poi.nome}. Sua localização ainda não conseguiu encaixar na malha de rotas.`);
+      return;
+    }
+
+    if (liveTrackingState === 'blocked' || liveTrackingState === 'unsupported') {
+      setRouteMessage(`Destino definido em ${poi.nome}. Libere o GPS para iniciar a rota até aqui.`);
+      return;
+    }
+
+    startLiveLocationTracking();
+    setRouteMessage(`Destino definido em ${poi.nome}. Estamos buscando sua localização exata para iniciar a rota.`);
   };
 
   const closeTutorial = () => {
@@ -1045,40 +2201,142 @@ const ModaCenterMap = () => {
       [poiId]: (prev[poiId] ?? 0) + 1,
     }));
     void trackPoiAccess(poiId).catch((error) => {
-      console.warn('Nao foi possivel registrar acesso do POI no backend:', error);
+      console.warn('Não foi possível registrar acesso do POI no backend:', error);
     });
   };
 
-  const focusPoi = (poi: PointData, registerAccess = true) => {
+  const focusPoi = (poi: PointData, registerAccess = true, options?: { moveCamera?: boolean }) => {
     if (registerAccess) registerPoiAccess(poi.id);
-    if (isMobile) setIsPinsPanelOpen(false);
+    if (isMobile) closeDockPanel();
     setActivePoiId(poi.id);
+    if (options?.moveCamera === false) return;
     setFocusPoint(poi);
   };
 
-  const buildRoute = (originId: string, destinationId: string) => {
-    const origem = getPoiById(originId);
-    const destino = getPoiById(destinationId);
+  const getAgendaSessionPoi = (session: AgendaSession) => {
+    if (session.linkedPoiId) {
+      const linkedPoi = getPoiById(session.linkedPoiId);
+      if (linkedPoi) return linkedPoi;
+    }
 
-    if (!origem || !destino) {
+    const query = normalizeForSearch(session.mapQuery || session.venue);
+    return (
+      pois.find((poi) =>
+        normalizeForSearch(`${poi.nome} ${poi.descricao ?? ''} ${poi.selo ?? ''}`).includes(query),
+      ) ?? null
+    );
+  };
+
+  const handleAgendaSessionFocus = (session: AgendaSession) => {
+    const matchedPoi = getAgendaSessionPoi(session);
+    if (!matchedPoi) return;
+    focusPoi(matchedPoi, true);
+    closeDockPanel();
+  };
+
+  const toggleAgendaFavorite = (sessionId: string) => {
+    setFavoriteAgendaIds((prev) =>
+      prev.includes(sessionId) ? prev.filter((id) => id !== sessionId) : [...prev, sessionId],
+    );
+  };
+
+  const commitRoutePath = (routePath: number[][], originLabel: string, destinationLabel: string) => {
+    const pathLatLng = routePath.map(([y, x]) => imageToLatLng(x, y));
+    const distanceMeters = getPathDistanceMeters(pathLatLng);
+    const etaMinutes = distanceMeters / (AVERAGE_WALKING_SPEED_MPS * 60);
+    const distanceLabel = formatDistanceLabel(distanceMeters);
+    const etaLabel = formatWalkingTimeLabel(etaMinutes);
+
+    setIsRouteViewportSettled(false);
+    setRouteRevealProgress(0);
+    setRota(routePath);
+    playUiSound('route');
+    setRouteMessage(
+      `Rota pronta: ${originLabel} -> ${destinationLabel}. Distância: ${distanceLabel} | Tempo médio: ${etaLabel}.`,
+    );
+  };
+
+  const buildRouteFromNodeToPoi = (originNodeId: string, originLabel: string, destinationPoi: PointData) => {
+    if (!destinationPoi.nodeId) {
+      setRota(null);
+      setRouteMessage(`"${destinationPoi.nome}" ainda não está conectado à malha de rotas.`);
+      return;
+    }
+
+    if (originNodeId === destinationPoi.nodeId) {
+      setRota(null);
+      setRouteMessage(`Você já está em ${destinationPoi.nome}.`);
+      return;
+    }
+
+    const path = findPath(originNodeId, destinationPoi.nodeId);
+    if (!path) {
+      setRota(null);
+      setRouteMessage(`Não encontramos rota entre ${originLabel} e ${destinationPoi.nome}.`);
+      return;
+    }
+
+    commitRoutePath(path, originLabel, destinationPoi.nome);
+  };
+
+  const buildRouteFromLiveLocation = (destinationId: string) => {
+    const destinationPoi = getPoiById(destinationId);
+
+    if (!destinationPoi) {
+      setRota(null);
+      setRouteMessage('Escolha um destino válido antes de iniciar a navegação.');
+      return;
+    }
+
+    if (!liveLocation) {
+      setRota(null);
+      setRouteMessage('Ainda não recebemos sua localização. Toque em "Usar meu GPS" novamente.');
+      return;
+    }
+
+    if (!liveLocation.isInsideEvent) {
+      setRota(null);
+      setRouteMessage('Sua localização atual está fora da área delimitada do evento.');
+      return;
+    }
+
+    if (!liveLocation.snappedNodeId) {
+      setRota(null);
+      setRouteMessage('Sua localização foi lida, mas ainda não conseguiu encaixar nos corredores do mapa.');
+      return;
+    }
+
+    buildRouteFromNodeToPoi(liveLocation.snappedNodeId, liveLocationOriginLabel, destinationPoi);
+  };
+
+  const buildRoute = (originId: string, destinationId: string) => {
+    const originPoi = getPoiById(originId);
+    const destinationPoi = getPoiById(destinationId);
+    let origem: PointData;
+    let destino: PointData;
+
+    if (!originPoi || !destinationPoi) {
       setRota(null);
       setRouteMessage('Escolha um local atual e um destino válidos.');
       return;
     }
 
-    if (origem.id === destino.id) {
+    origem = originPoi;
+    destino = destinationPoi;
+
+    if (originPoi.id === destinationPoi.id) {
       setRota(null);
       setRouteMessage('O local atual e o destino precisam ser diferentes.');
       return;
     }
 
-    if (!origem.nodeId || !destino.nodeId) {
+    if (!originPoi.nodeId || !destinationPoi.nodeId) {
       setRota(null);
       setRouteMessage('Não foi possível conectar um dos pontos à malha de rotas.');
       return;
     }
 
-    const caminho = findPath(origem.nodeId, destino.nodeId);
+    const caminho = findPath(originPoi.nodeId, destinationPoi.nodeId);
     if (!caminho) {
       setRota(null);
       setRouteMessage(`Não encontramos rota entre ${origem.nome} e ${destino.nome}.`);
@@ -1091,33 +2349,13 @@ const ModaCenterMap = () => {
     const distanceLabel = formatDistanceLabel(distanceMeters);
     const etaLabel = formatWalkingTimeLabel(etaMinutes);
 
+    setIsRouteViewportSettled(false);
+    setRouteRevealProgress(0);
     setRota(caminho);
+    playUiSound('route');
     setRouteMessage(
       `Rota pronta: ${origem.nome} -> ${destino.nome}. Distância: ${distanceLabel} | Tempo médio: ${etaLabel}.`,
     );
-  };
-
-  const markPoiAsCurrentLocation = (poi: PointData) => {
-    if (!poi.nodeId) {
-      setRouteMessage(`"${poi.nome}" ainda não está conectado à malha de rotas.`);
-      return;
-    }
-
-    selectOriginPoi(poi);
-
-    if (!selectedDestinationId) {
-      setRota(null);
-      setRouteMessage(`Local atual definido em ${poi.nome}. Agora escolha seu destino.`);
-      return;
-    }
-
-    if (selectedDestinationId === poi.id) {
-      setRota(null);
-      setRouteMessage(`Você já está em ${poi.nome}. Escolha outro destino.`);
-      return;
-    }
-
-    buildRoute(poi.id, selectedDestinationId);
   };
 
   const navigateToPoi = (poi: PointData) => {
@@ -1126,37 +2364,36 @@ const ModaCenterMap = () => {
       return;
     }
 
-    selectDestinationPoi(poi);
+    openDockPanel('route');
+    selectDestinationPoi(poi, { buildInstantly: false });
 
-    if (!selectedOriginId) {
+    if (hasLiveLocationFix) {
+      buildRouteFromLiveLocation(poi.id);
+      return;
+    }
+
+    if (liveTrackingState === 'requesting') {
       setRota(null);
-      setRouteMessage(`Destino definido em ${poi.nome}. Agora informe seu local atual.`);
+      setRouteMessage(`Destino definido em ${poi.nome}. Estamos aguardando sua localização para montar a rota.`);
       return;
     }
 
-    if (selectedOriginId === poi.id) {
+    if (liveTrackingState === 'active' && !hasLiveLocationFix) {
       setRota(null);
-      setRouteMessage(`Você já está em ${poi.nome}.`);
+      setRouteMessage(`Destino definido em ${poi.nome}. Sua localização ainda não conseguiu encaixar na malha de rotas.`);
       return;
     }
 
-    buildRoute(selectedOriginId, poi.id);
-  };
-
-  const handleDirectionsFromActivePoi = () => {
-    if (!activePoi) {
-      setRouteMessage('Selecione um ponto para traçar a rota.');
+    if (liveTrackingState === 'blocked' || liveTrackingState === 'unsupported') {
+      setRota(null);
+      setRouteMessage(`Destino definido em ${poi.nome}. Libere o GPS para iniciar a rota até aqui.`);
       return;
     }
 
-    navigateToPoi(activePoi);
+    startLiveLocationTracking();
+    setRota(null);
+    setRouteMessage(`Destino definido em ${poi.nome}. Estamos buscando sua localização exata para iniciar a rota.`);
   };
-
-  const setActivePoiAsOrigin = () => {
-    if (!activePoi) return;
-    markPoiAsCurrentLocation(activePoi);
-  };
-
   const handleMarkerSelection = (poi: PointData) => {
     if (isAdmin) {
       setEditingPoi({ ...poi });
@@ -1165,16 +2402,6 @@ const ModaCenterMap = () => {
     }
 
     focusPoi(poi, true);
-
-    if (!poi.nodeId) {
-      setRouteMessage(`"${poi.nome}" ainda não está conectado à malha de rotas.`);
-      return;
-    }
-
-    if (selectedOriginId && selectedOriginId !== poi.id && !selectedDestinationId) {
-      selectDestinationPoi(poi);
-      buildRoute(selectedOriginId, poi.id);
-    }
   };
 
   const updatePoiPosition = (poiId: string, lat: number, lng: number) => {
@@ -1209,6 +2436,10 @@ const ModaCenterMap = () => {
         : prev,
     );
 
+    setDraftPoiIds((prev) => (prev.includes(poiId) ? prev : [...prev, poiId]));
+    setPoiDataSource('local-workspace');
+    setAdminStatusMessage('Posição atualizada na edição local. Publique quando quiser enviar ao servidor.');
+
     if (activePoiId === poiId) {
       setFocusPoint((prev) =>
         prev?.id === poiId
@@ -1221,6 +2452,24 @@ const ModaCenterMap = () => {
           : prev,
       );
     }
+  };
+
+  const startNewPoiDraft = () => {
+    const fallbackX = focusPoint?.x ?? Math.round(MAP_WIDTH / 2);
+    const fallbackY = focusPoint?.y ?? Math.round(MAP_HEIGHT / 2);
+    setEditingPoi({
+      nome: '',
+      tipo: 'atividade',
+      x: fallbackX,
+      y: fallbackY,
+      descricao: '',
+      imagemUrl: defaultPoiImages.atividade,
+      contato: '',
+      corDestaque: '',
+      selo: '',
+      nodeId: findNearestNode(fallbackX, fallbackY, 90) ?? undefined,
+    });
+    setAdminStatusMessage('Novo ponto pronto para edição. Clique no mapa para reposicionar se precisar.');
   };
 
   const MapEvents = () => {
@@ -1247,12 +2496,217 @@ const ModaCenterMap = () => {
           selo: '',
         });
       },
+      zoomend(event) {
+        setMapZoomLevel(event.target.getZoom());
+      },
     });
 
     return null;
   };
 
+  const buildPoiFromEditingState = () => {
+    const currentEditingPoi = editingPoi;
+
+    if (!currentEditingPoi || !currentEditingPoi.nome || !currentEditingPoi.tipo) {
+      alert('Informe nome e tipo do ponto.');
+      return null;
+    }
+
+    if (typeof currentEditingPoi.x !== 'number' || typeof currentEditingPoi.y !== 'number') {
+      alert('Coordenadas inválidas para o ponto.');
+      return null;
+    }
+
+    const nearestNode = findNearestNode(currentEditingPoi.x, currentEditingPoi.y, 90);
+    if (!nearestNode) {
+      alert('Este ponto está longe dos corredores de rota. Marque mais perto de um caminho.');
+      return null;
+    }
+
+    const baseId = currentEditingPoi.nome
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    return {
+      id: currentEditingPoi.id || `${baseId || 'ponto'}_${Date.now()}`,
+      x: currentEditingPoi.x,
+      y: currentEditingPoi.y,
+      nome: currentEditingPoi.nome.trim(),
+      tipo: currentEditingPoi.tipo,
+      descricao: currentEditingPoi.descricao?.trim() || undefined,
+      imagemUrl: currentEditingPoi.imagemUrl?.trim() || defaultPoiImages[currentEditingPoi.tipo],
+      contato: normalizeContact(currentEditingPoi.contato) || undefined,
+      corDestaque: normalizeHexColor(currentEditingPoi.corDestaque),
+      selo: normalizeBadgeText(currentEditingPoi.selo),
+      nodeId: nearestNode,
+    } satisfies PointData;
+  };
+
+  const salvarRascunhoPonto = () => {
+    const novoPonto = buildPoiFromEditingState();
+    if (!novoPonto) return;
+
+    setPois((prev) => upsertPoiInCollection(prev, novoPonto));
+    setDraftPoiIds((prev) => (prev.includes(novoPonto.id) ? prev : [...prev, novoPonto.id]));
+    setPoiDataSource('local-workspace');
+    setEditingPoi(novoPonto);
+    setFocusPoint(novoPonto);
+    setActivePoiId(novoPonto.id);
+    setAdminStatusMessage(`Rascunho salvo localmente para ${novoPonto.nome}.`);
+  };
+
+  const publishPoiToBackend = async (poi: PointData, currentServerPois = serverPois) => {
+    const existsOnBackend = currentServerPois.some((item) => item.id === poi.id);
+    const syncedPoi = existsOnBackend
+      ? await updatePoi(poi.id, toPoiApiPayload(poi))
+      : await createPoi(toPoiApiPayload(poi, { includeId: true }));
+
+    return fromApiPoi(syncedPoi);
+  };
+
+  const publicarPontoAtual = async () => {
+    const novoPonto = buildPoiFromEditingState();
+    if (!novoPonto) return;
+
+    try {
+      const normalizedPoi = await publishPoiToBackend(novoPonto);
+
+      setPois((prev) => upsertPoiInCollection(prev, normalizedPoi));
+      setServerPois((prev) => upsertPoiInCollection(prev, normalizedPoi));
+      setDraftPoiIds((prev) => prev.filter((id) => id !== normalizedPoi.id));
+      setEditingPoi(normalizedPoi);
+      setFocusPoint(normalizedPoi);
+      setActivePoiId(normalizedPoi.id);
+      setBackendSyncState('ready');
+      setAdminStatusMessage(`Ponto ${normalizedPoi.nome} publicado no servidor.`);
+    } catch (error) {
+      console.error('Falha ao publicar ponto no backend:', error);
+      alert('Não foi possível publicar o ponto no servidor. Confira a API e a ADMIN_API_KEY.');
+      setBackendSyncState('error');
+    }
+  };
+
+  const publicarRascunhos = async () => {
+    if (draftPoiIds.length === 0) {
+      setAdminStatusMessage('Não há rascunhos pendentes para publicar.');
+      return;
+    }
+
+    let nextPois = [...pois];
+    let nextServerPois = [...serverPois];
+    const remainingDraftIds: string[] = [];
+    let syncedCount = 0;
+
+    for (const poiId of draftPoiIds) {
+      const poi = nextPois.find((item) => item.id === poiId);
+      if (!poi) continue;
+
+      try {
+        const normalizedPoi = await publishPoiToBackend(poi, nextServerPois);
+        nextPois = upsertPoiInCollection(nextPois, normalizedPoi);
+        nextServerPois = upsertPoiInCollection(nextServerPois, normalizedPoi);
+        syncedCount += 1;
+      } catch (error) {
+        console.error(`Falha ao publicar o rascunho ${poiId}:`, error);
+        remainingDraftIds.push(poiId);
+      }
+    }
+
+    setPois(nextPois);
+    setServerPois(nextServerPois);
+    setDraftPoiIds(remainingDraftIds);
+    setBackendSyncState(remainingDraftIds.length > 0 ? 'error' : 'ready');
+    setAdminStatusMessage(
+      remainingDraftIds.length > 0
+        ? `${syncedCount} rascunho(s) publicados e ${remainingDraftIds.length} permaneceram pendentes.`
+        : `${syncedCount} rascunho(s) publicados com sucesso.`,
+    );
+  };
+
+  const removerPontoLocal = (id: string) => {
+    if (!window.confirm('Remover este ponto apenas da edição local?')) return;
+
+    setPois((prev) => prev.filter((poi) => poi.id !== id));
+    setDraftPoiIds((prev) => prev.filter((poiId) => poiId !== id));
+    setManualVisiblePoiIds((prev) => prev.filter((poiId) => poiId !== id));
+    setPoiDataSource('local-workspace');
+    setFocusPoint((prev) => (prev?.id === id ? null : prev));
+    if (editingPoi?.id === id) setEditingPoi(null);
+    if (activePoiId === id) setActivePoiId(null);
+    if (selectedOriginId === id || selectedDestinationId === id) {
+      clearRoute();
+    }
+    setAdminStatusMessage('Ponto removido apenas da edição local.');
+  };
+
+  const abrirImportadorJson = () => {
+    adminImportInputRef.current?.click();
+  };
+
+  const handleAdminImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const content = await file.text();
+      const parsed = JSON.parse(content) as unknown;
+      const importedPois = parseStoredPoiList(parsed);
+
+      if (importedPois.length === 0) {
+        alert('O arquivo JSON não possui pontos válidos.');
+        return;
+      }
+
+      setPois(importedPois);
+      setDraftPoiIds(importedPois.map((poi) => poi.id));
+      setPoiDataSource('local-workspace');
+      setEditingPoi(importedPois[0]);
+      setFocusPoint(importedPois[0]);
+      setActivePoiId(importedPois[0].id);
+      clearRoute();
+      setAdminStatusMessage(`${importedPois.length} ponto(s) importados para a edição local.`);
+    } catch (error) {
+      console.error('Falha ao importar JSON de pontos:', error);
+      alert('Não foi possível importar este arquivo JSON.');
+    }
+  };
+
+  const restaurarFontePrincipal = () => {
+    if (!window.confirm('Descartar a edição local e voltar para a fonte principal?')) return;
+
+    setDraftPoiIds([]);
+    setEditingPoi(null);
+    clearAdminWorkspaceSnapshot();
+
+    if (serverPois.length > 0) {
+      setPois(serverPois);
+      setPoiDataSource('backend');
+      setAdminStatusMessage('Edição local descartada. Voltamos aos dados do servidor.');
+      return;
+    }
+
+    const runtimeBackup = loadPoiRuntimeBackup();
+    if (runtimeBackup.length > 0) {
+      setPois(runtimeBackup);
+      setPoiDataSource('local-backup');
+      setAdminStatusMessage('Workspace descartado. Voltamos ao backup local mais recente.');
+      return;
+    }
+
+    setPois(getFrontSeedPois());
+    setPoiDataSource('front-seed');
+    setAdminStatusMessage('Workspace descartado. Voltamos ao conjunto local padrao.');
+  };
+
   const salvarPonto = async () => {
+    await publicarPontoAtual();
+    /*
+    return;
+
     if (!editingPoi || !editingPoi.nome || !editingPoi.tipo) {
       alert('Informe nome e tipo do ponto.');
       return;
@@ -1265,7 +2719,7 @@ const ModaCenterMap = () => {
 
     const nearestNode = findNearestNode(editingPoi.x, editingPoi.y, 90);
     if (!nearestNode) {
-      alert('Este ponto esta longe dos corredores de rota. Marque mais perto de um caminho.');
+      alert('Este ponto está longe dos corredores de rota. Marque mais perto de um caminho.');
       return;
     }
 
@@ -1310,8 +2764,9 @@ const ModaCenterMap = () => {
       setEditingPoi(null);
     } catch (error) {
       console.error('Falha ao salvar ponto no backend:', error);
-      alert('Nao foi possivel salvar o ponto no backend. Confira a API e a ADMIN_API_KEY.');
+      alert('Não foi possível salvar o ponto no servidor. Confira a API e a ADMIN_API_KEY.');
     }
+    */
   };
 
   const deletarPonto = async (id: string) => {
@@ -1321,6 +2776,8 @@ const ModaCenterMap = () => {
       await deletePoi(id);
 
       setPois((prev) => prev.filter((poi) => poi.id !== id));
+      setServerPois((prev) => prev.filter((poi) => poi.id !== id));
+      setDraftPoiIds((prev) => prev.filter((poiId) => poiId !== id));
       setPoiAccessCount((prev) => {
         if (!(id in prev)) return prev;
         const next = { ...prev };
@@ -1333,9 +2790,11 @@ const ModaCenterMap = () => {
         clearRoute();
       }
       setEditingPoi(null);
+      setBackendSyncState('ready');
+      setAdminStatusMessage('Ponto removido do servidor com sucesso.');
     } catch (error) {
       console.error('Falha ao deletar ponto no backend:', error);
-      alert('Nao foi possivel deletar o ponto no backend. Confira a API e a ADMIN_API_KEY.');
+      alert('Não foi possível excluir o ponto no servidor. Confira a API e a ADMIN_API_KEY.');
     }
   };
 
@@ -1364,13 +2823,94 @@ const ModaCenterMap = () => {
   };
 
   const handleManualRoute = () => {
-    if (!selectedOriginId || !selectedDestinationId) {
+    if (!selectedDestinationId) {
+      setRouteMessage('Informe local atual e destino antes de traçar a rota.');
+      return;
+    }
+
+    if (hasLiveLocationFix) {
+      buildRouteFromLiveLocation(selectedDestinationId);
+      return;
+    }
+
+    if (liveTrackingState === 'requesting') {
+      setRouteMessage('Ainda estamos buscando sua localização para montar a rota automaticamente.');
+      return;
+    }
+
+    if (!selectedOriginId) {
       setRouteMessage('Informe local atual e destino antes de traçar a rota.');
       return;
     }
 
     buildRoute(selectedOriginId, selectedDestinationId);
   };
+
+  useEffect(() => {
+    if (!selectedDestinationId || !hasLiveLocationFix || !liveLocation?.snappedNodeId) {
+      lastLiveRouteKeyRef.current = '';
+      return;
+    }
+
+    const routeKey = `${selectedDestinationId}:${liveLocation.snappedNodeId}`;
+    if (routeKey === lastLiveRouteKeyRef.current) return;
+
+    lastLiveRouteKeyRef.current = routeKey;
+    buildRouteFromLiveLocation(selectedDestinationId);
+  }, [selectedDestinationId, hasLiveLocationFix, liveLocation?.snappedNodeId]);
+
+  useEffect(() => {
+    if (routeRevealFrameRef.current !== null) {
+      window.cancelAnimationFrame(routeRevealFrameRef.current);
+      routeRevealFrameRef.current = null;
+    }
+
+    if (routeLatLngPoints.length === 0) {
+      setRouteRevealProgress(0);
+      return;
+    }
+
+    if (routeLatLngPoints.length === 1 || prefersReducedMotion) {
+      setRouteRevealProgress(1);
+      return;
+    }
+
+    if (!isRouteViewportSettled) {
+      setRouteRevealProgress(0);
+      return;
+    }
+
+    setRouteRevealProgress(0);
+    const animationStart = performance.now();
+    const animationDurationMs = getAdaptiveAnimationDuration(
+      routeDistanceMeters,
+      ROUTE_REVEAL_MIN_DURATION_MS,
+      ROUTE_REVEAL_MAX_DURATION_MS,
+      ROUTE_REVEAL_MS_PER_METER,
+    );
+
+    const revealStep = () => {
+      const elapsed = performance.now() - animationStart;
+      const progress = Math.min(1, elapsed / animationDurationMs);
+      setRouteRevealProgress(easeInOutCubic(progress));
+
+      if (progress < 1) {
+        routeRevealFrameRef.current = window.requestAnimationFrame(revealStep);
+        return;
+      }
+
+      routeRevealFrameRef.current = null;
+    };
+
+    routeRevealFrameRef.current = window.requestAnimationFrame(revealStep);
+
+    return () => {
+      if (routeRevealFrameRef.current !== null) {
+        window.cancelAnimationFrame(routeRevealFrameRef.current);
+        routeRevealFrameRef.current = null;
+      }
+    };
+  }, [routeLatLngPoints, routeDistanceMeters, prefersReducedMotion, isRouteViewportSettled]);
 
   useEffect(() => {
     if (walkerTimerRef.current !== null) {
@@ -1390,12 +2930,26 @@ const ModaCenterMap = () => {
       return;
     }
 
+    if (!isRouteRevealComplete) {
+      setWalkerPosition(null);
+      setWalkerProgress(0);
+      return;
+    }
+
     setWalkerPosition(routeLatLngPoints[0]);
     setWalkerProgress(0);
 
     const realWalkingDurationMs = (routeDistanceMeters / AVERAGE_WALKING_SPEED_MPS) * 1000;
-    const animationDurationMs =
-      Number.isFinite(realWalkingDurationMs) && realWalkingDurationMs > 0 ? realWalkingDurationMs : 1;
+    const animationDurationMs = isPresentationMode
+      ? getAdaptiveAnimationDuration(
+          routeDistanceMeters,
+          PRESENTATION_WALKER_MIN_DURATION_MS,
+          PRESENTATION_WALKER_MAX_DURATION_MS,
+          PRESENTATION_WALKER_MS_PER_METER,
+        )
+      : Number.isFinite(realWalkingDurationMs) && realWalkingDurationMs > 0
+        ? realWalkingDurationMs
+        : 1;
     const tickMs = WALKER_PROGRESS_UPDATE_MS;
     const animationStart = performance.now();
 
@@ -1420,71 +2974,7 @@ const ModaCenterMap = () => {
         walkerTimerRef.current = null;
       }
     };
-  }, [routeLatLngPoints, routeDistanceMeters]);
-
-  useEffect(() => {
-    mobileSheetHeightRef.current = mobileSheetHeight;
-  }, [mobileSheetHeight]);
-
-  useEffect(() => {
-    if (!activePoiId) {
-      setMobileSheetHeight(0);
-      return;
-    }
-    const { defaultHeight } = getMobileSheetBounds();
-    setMobileSheetHeight(defaultHeight);
-  }, [activePoiId, getMobileSheetBounds]);
-
-  useEffect(() => {
-    if (!activePoiId || typeof window === 'undefined') return;
-
-    const syncMobileSheetSize = () => {
-      const { defaultHeight } = getMobileSheetBounds();
-      const currentHeight = mobileSheetHeightRef.current || defaultHeight;
-      setMobileSheetHeight(clampMobileSheetHeight(currentHeight));
-    };
-
-    syncMobileSheetSize();
-    window.addEventListener('resize', syncMobileSheetSize);
-    window.visualViewport?.addEventListener('resize', syncMobileSheetSize);
-    return () => {
-      window.removeEventListener('resize', syncMobileSheetSize);
-      window.visualViewport?.removeEventListener('resize', syncMobileSheetSize);
-    };
-  }, [activePoiId, clampMobileSheetHeight, getMobileSheetBounds]);
-
-  useEffect(() => {
-    if (!isMobileSheetDragging || typeof window === 'undefined') return;
-
-    const previousTouchAction = document.body.style.touchAction;
-    document.body.style.touchAction = 'none';
-
-    const onPointerMove = (event: PointerEvent) => {
-      if (sheetDragStartYRef.current === null) return;
-      event.preventDefault();
-      const deltaY = sheetDragStartYRef.current - event.clientY;
-      const nextHeight = sheetDragStartHeightRef.current + deltaY;
-      setMobileSheetHeight(clampMobileSheetHeight(nextHeight));
-    };
-
-    const finishDrag = () => {
-      sheetDragStartYRef.current = null;
-      setIsMobileSheetDragging(false);
-      const { minHeight, maxHeight } = getMobileSheetBounds();
-      const middle = (minHeight + maxHeight) / 2;
-      setMobileSheetHeight((prev) => (prev > middle ? maxHeight : Math.max(minHeight, prev)));
-    };
-
-    window.addEventListener('pointermove', onPointerMove, { passive: false });
-    window.addEventListener('pointerup', finishDrag);
-    window.addEventListener('pointercancel', finishDrag);
-    return () => {
-      document.body.style.touchAction = previousTouchAction;
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', finishDrag);
-      window.removeEventListener('pointercancel', finishDrag);
-    };
-  }, [isMobileSheetDragging, clampMobileSheetHeight, getMobileSheetBounds]);
+  }, [routeLatLngPoints, routeDistanceMeters, isRouteRevealComplete, isPresentationMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1498,10 +2988,19 @@ const ModaCenterMap = () => {
   }, []);
 
   useEffect(() => {
-    setIsPinsPanelOpen(false);
-    setIsRoutePanelOpen(false);
-    setIsActionDockExpanded(false);
-  }, [isMobile]);
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia(COMPACT_MEDIA_QUERY);
+    const handleMediaChange = () => setIsCompactViewport(mediaQuery.matches);
+
+    handleMediaChange();
+    mediaQuery.addEventListener('change', handleMediaChange);
+    return () => mediaQuery.removeEventListener('change', handleMediaChange);
+  }, []);
+
+  useEffect(() => {
+    closeDockPanel();
+  }, [closeDockPanel, isMobile]);
 
   useEffect(() => {
     if (!selectedOriginId) return;
@@ -1520,6 +3019,24 @@ const ModaCenterMap = () => {
   }, [poiAccessCount]);
 
   useEffect(() => {
+    if (serverPois.length === 0) return;
+    persistPoiRuntimeBackup(serverPois);
+  }, [serverPois]);
+
+  useEffect(() => {
+    if (poiDataSource !== 'local-workspace' && draftPoiIds.length === 0) {
+      clearAdminWorkspaceSnapshot();
+      return;
+    }
+
+    persistAdminWorkspaceSnapshot({
+      pois,
+      draftPoiIds,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [draftPoiIds, poiDataSource, pois]);
+
+  useEffect(() => {
     setManualVisiblePoiIds((prev) => prev.filter((id) => pois.some((poi) => poi.id === id)));
   }, [pois]);
 
@@ -1529,6 +3046,19 @@ const ModaCenterMap = () => {
     }
   }, [activePoiId, pois]);
 
+  useEffect(() => {
+    if (!selectedOriginId && !selectedDestinationId) return;
+    const missingOrigin = selectedOriginId && !pois.some((poi) => poi.id === selectedOriginId);
+    const missingDestination = selectedDestinationId && !pois.some((poi) => poi.id === selectedDestinationId);
+    if (missingOrigin || missingDestination) {
+      clearRoute();
+    }
+  }, [pois, selectedDestinationId, selectedOriginId]);
+
+  useEffect(() => {
+    setExpandedPopupPoiId(null);
+  }, [activePoiId]);
+
   const getMarkerIcon = (poi: PointData, isActive: boolean) => {
     if (!isAdmin) {
       if (poi.id === selectedOriginId) return stateIcons.origem;
@@ -1537,123 +3067,606 @@ const ModaCenterMap = () => {
     }
     return getPoiIcon(poi, false);
   };
-
-  const activeContactLink = activePoi ? toContactLink(activePoi.contato) : null;
-  const activePoiAccentColor = activePoi ? getPoiAccentColor(activePoi) : '#1d4ed8';
-  const activePoiBadgeText = activePoi ? getPoiBadgeText(activePoi) : 'P';
-  const activeGalleryImages = activePoi ? getPoiGalleryImages(activePoi) : [];
-  const activePanelGalleryImages = isMobile
-    ? activeGalleryImages.slice(0, 1)
-    : activeGalleryImages.slice(0, isPresentationMode ? 1 : 2);
-  const isActivePoiCurrentLocation = Boolean(activePoi && selectedOriginId === activePoi.id);
-  const shouldPromoteSetOrigin = !selectedOriginId || isActivePoiCurrentLocation;
-  const primaryPoiActionLabel = shouldPromoteSetOrigin
-    ? isActivePoiCurrentLocation
-      ? 'Você está aqui'
-      : 'Definir como local atual'
-    : 'Traçar rota até aqui';
-  const secondaryPoiActionLabel = shouldPromoteSetOrigin
-    ? 'Traçar rota até aqui'
-    : 'Alterar local atual';
-  const primaryPoiAction = shouldPromoteSetOrigin ? setActivePoiAsOrigin : handleDirectionsFromActivePoi;
-  const secondaryPoiAction = shouldPromoteSetOrigin ? handleDirectionsFromActivePoi : setActivePoiAsOrigin;
   const currentTutorialStep = tutorialSteps[tutorialStepIndex];
-  const mapOverlayOpacity = isMapIntroActive ? (isMobile ? 0.2 : 0.16) : isMobile ? 0.98 : 0.94;
-  const basemapOpacity = isMapIntroActive ? 1 : 0;
-  const panelTopOffset = isMobile ? 'calc(env(safe-area-inset-top, 0px) + 118px)' : 108;
-  const adminTriggerTopOffset = isMobile ? 'calc(env(safe-area-inset-top, 0px) + 86px)' : 84;
-  const mobileSheetBounds = activePoi ? getMobileSheetBounds() : null;
-  const resolvedMobileSheetHeight = mobileSheetBounds
-    ? clampMobileSheetHeight(mobileSheetHeight || mobileSheetBounds.defaultHeight)
-    : 0;
-  const editingAccentColorPreview = normalizeHexColor(editingPoi?.corDestaque) ?? '#1d4ed8';
+  const mapOverlayOpacity = 1;
+  const basemapOpacity = 0;
+  const resolvedDefaultZoom = isMobile ? MAP_MOBILE_DEFAULT_ZOOM : MAP_DEFAULT_ZOOM;
+  const popupZoomTier =
+    mapZoomLevel < 17.8 ? 'popup-zoom-overview' : mapZoomLevel < 18.9 ? 'popup-zoom-balanced' : 'popup-zoom-focus';
+  const popupSizePreset = isMobile
+    ? popupZoomTier === 'popup-zoom-overview'
+      ? { minWidth: 206, maxWidth: 270 }
+      : popupZoomTier === 'popup-zoom-balanced'
+        ? { minWidth: 194, maxWidth: 252 }
+        : { minWidth: 182, maxWidth: 236 }
+    : popupZoomTier === 'popup-zoom-overview'
+      ? { minWidth: 228, maxWidth: 316 }
+      : popupZoomTier === 'popup-zoom-balanced'
+        ? { minWidth: 214, maxWidth: 294 }
+        : { minWidth: 202, maxWidth: 270 };
+  const dockWidth = isMobile
+    ? '100vw'
+    : isCompactViewport
+      ? 'min(520px, calc(100vw - 24px))'
+      : 'min(560px, calc(100vw - 48px))';
+  const dockBottom = isMobile ? 0 : 22;
+  const dockPanelTop = isMobile
+    ? 'calc(env(safe-area-inset-top, 0px) + 118px)'
+    : isCompactViewport
+      ? 118
+      : 138;
+  const dockPanelBottom = isMobile ? 'calc(84px + env(safe-area-inset-bottom, 0px))' : isCompactViewport ? 82 : 94;
+  const adminTriggerTopOffset = isMobile
+    ? 'calc(env(safe-area-inset-top, 0px) + 72px)'
+    : isCompactViewport
+      ? 60
+      : 72;
+  const isCompactAdminLayout = isMobile || isCompactViewport;
+  const adminPanelWidth = isCompactAdminLayout ? 'min(100vw, 390px)' : '340px';
+  const editingAccentColorPreview =
+    (editingPoi?.corDestaque && isBrandPaletteColor(editingPoi.corDestaque) && normalizeHexColor(editingPoi.corDestaque)) ||
+    BRAND_COLORS.primary;
   const hasInvalidEditingAccentColor = Boolean(
-    editingPoi?.corDestaque?.trim() && !normalizeHexColor(editingPoi.corDestaque),
+    editingPoi?.corDestaque?.trim() && !isBrandPaletteColor(editingPoi.corDestaque),
   );
   const editingBadgePreview =
     normalizeBadgeText(editingPoi?.selo) ?? editingPoi?.nome?.trim().charAt(0).toUpperCase() ?? 'P';
+  const sourceMetaMap: Record<PoiDataSource, { label: string; tint: string; tone: string }> = {
+    backend: {
+      label: 'Fonte ativa: servidor',
+      tint: 'rgba(106, 56, 208, 0.14)',
+      tone: BRAND_COLORS.primaryStrong,
+    },
+    'local-workspace': {
+      label: 'Fonte ativa: edição local',
+      tint: 'rgba(217, 200, 255, 0.24)',
+      tone: BRAND_COLORS.ink,
+    },
+    'local-backup': {
+      label: 'Fonte ativa: backup local',
+      tint: 'rgba(45, 35, 61, 0.12)',
+      tone: BRAND_COLORS.ink,
+    },
+    'front-seed': {
+      label: 'Fonte ativa: base local do aplicativo',
+      tint: 'rgba(239, 232, 255, 0.92)',
+      tone: BRAND_COLORS.primaryStrong,
+    },
+  };
+  const currentSourceMeta = sourceMetaMap[poiDataSource];
+  const editingPoiExistsOnBackend = Boolean(editingPoi?.id && serverPois.some((poi) => poi.id === editingPoi.id));
+  const editingPoiIsDraft = Boolean(editingPoi?.id && draftPoiIdSet.has(editingPoi.id));
+  const backendSyncLabel =
+    backendSyncState === 'loading'
+      ? 'Conectando com o servidor'
+      : backendSyncState === 'ready'
+        ? 'Servidor sincronizado'
+        : 'Servidor indisponível';
+  const isLiveLocationAccuracyWeak = Boolean(
+    liveLocation && liveLocation.accuracyMeters > LIVE_LOCATION_WARNING_ACCURACY_METERS,
+  );
+  const liveLocationPrimaryActionLabel =
+    liveTrackingState === 'requesting'
+      ? 'Buscando GPS'
+      : liveLocationSource === 'mock'
+        ? 'Usar GPS real'
+        : hasLiveLocationFix
+        ? 'Reiniciar GPS'
+        : 'Usar meu GPS';
+  const shouldShowStopLiveLocation = liveTrackingState !== 'idle' && liveTrackingState !== 'unsupported';
+  const liveLocationSourceLabel =
+    liveLocationSource === 'mock' ? 'Fonte simulada' : liveLocationSource === 'gps' ? 'Fonte GPS' : 'Sem fonte ativa';
+  const liveLocationCard = (
+    <div
+      style={{
+        borderRadius: 16,
+        border: `1px solid ${liveLocationStatusTone}`,
+        background: 'rgba(255, 255, 255, 0.96)',
+        boxShadow: '0 18px 30px rgba(106, 56, 208, 0.12)',
+        padding: 14,
+        display: 'grid',
+        gap: 12,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              width: 'fit-content',
+              borderRadius: 999,
+              padding: '4px 9px',
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              background: `${liveLocationStatusTone}22`,
+              color: liveLocationStatusTone,
+            }}
+          >
+            {liveLocationHeadline}
+          </span>
+          <strong style={{ fontSize: 16, color: 'var(--color-text)' }}>{routeOriginSummaryName}</strong>
+          <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-muted)' }}>{liveLocationStatusText}</span>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type='button'
+            onClick={startLiveLocationTracking}
+            style={{ ...actionButton, flex: 'initial', padding: '10px 12px' }}
+            className='btn btn-primary'
+          >
+            {liveLocationPrimaryActionLabel}
+          </button>
+          {shouldShowStopLiveLocation && (
+            <button
+              type='button'
+              onClick={() => stopLiveLocationTracking()}
+              style={{ ...actionButton, flex: 'initial', padding: '10px 12px' }}
+              className='btn btn-neutral'
+            >
+              Usar origem manual
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            borderRadius: 12,
+            background: 'rgba(106, 56, 208, 0.06)',
+            padding: '10px 12px',
+            display: 'grid',
+            gap: 3,
+          }}
+        >
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Área</span>
+          <strong style={{ fontSize: 13, color: 'var(--color-text)' }}>
+            {liveLocation ? (liveLocation.isInsideEvent ? 'Dentro da operação' : 'Fora da área') : 'Aguardando GPS'}
+          </strong>
+        </div>
+        <div
+          style={{
+            borderRadius: 12,
+            background: 'rgba(106, 56, 208, 0.06)',
+            padding: '10px 12px',
+            display: 'grid',
+            gap: 3,
+          }}
+        >
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Precisão</span>
+          <strong style={{ fontSize: 13, color: isLiveLocationAccuracyWeak ? BRAND_COLORS.highlight : BRAND_COLORS.ink }}>
+            {liveLocationAccuracyLabel ?? '--'}
+          </strong>
+        </div>
+        <div
+          style={{
+            borderRadius: 12,
+            background: 'rgba(106, 56, 208, 0.06)',
+            padding: '10px 12px',
+            display: 'grid',
+            gap: 3,
+          }}
+        >
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Atualizado</span>
+          <strong style={{ fontSize: 13, color: 'var(--color-text)' }}>{liveLocationUpdatedAtLabel ?? '--'}</strong>
+        </div>
+        <div
+          style={{
+            borderRadius: 12,
+            background: 'rgba(106, 56, 208, 0.06)',
+            padding: '10px 12px',
+            display: 'grid',
+            gap: 3,
+          }}
+        >
+          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Fonte</span>
+          <strong style={{ fontSize: 13, color: 'var(--color-text)' }}>{liveLocationSourceLabel}</strong>
+        </div>
+      </div>
+
+      <div
+        style={{
+          borderRadius: 14,
+          border: '1px dashed rgba(106, 56, 208, 0.18)',
+          padding: 12,
+          display: 'grid',
+          gap: 10,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'grid', gap: 3 }}>
+            <strong style={{ fontSize: 14, color: 'var(--color-text)' }}>Teste em casa</strong>
+            <span style={{ fontSize: 12, lineHeight: 1.45, color: 'var(--color-text-muted)' }}>
+              Simule uma posição manual para validar a navegação sem sair de casa.
+            </span>
+          </div>
+          <button
+            type='button'
+            onClick={() => setIsLocationTestOpen((prev) => !prev)}
+            style={{ ...actionButton, flex: 'initial', padding: '9px 12px' }}
+            className='btn btn-neutral'
+          >
+            {isLocationTestOpen ? 'Ocultar teste' : 'Abrir teste'}
+          </button>
+        </div>
+
+        {isLocationTestOpen && (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+                gap: 8,
+              }}
+            >
+              <input
+                value={testLocationLatInput}
+                onChange={(event) => setTestLocationLatInput(event.target.value)}
+                style={{ ...inputStyle, margin: 0 }}
+                placeholder='Latitude simulada'
+              />
+              <input
+                value={testLocationLngInput}
+                onChange={(event) => setTestLocationLngInput(event.target.value)}
+                style={{ ...inputStyle, margin: 0 }}
+                placeholder='Longitude simulada'
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type='button'
+                onClick={applyMockLocation}
+                style={{ ...actionButton, flex: 'initial', padding: '9px 12px' }}
+                className='btn btn-primary'
+              >
+                Aplicar localização teste
+              </button>
+              <button
+                type='button'
+                onClick={seedTestLocationWithEventCenter}
+                style={{ ...actionButton, flex: 'initial', padding: '9px 12px' }}
+                className='btn btn-neutral'
+              >
+                Preencher com centro do evento
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 11, lineHeight: 1.5, color: 'var(--color-text-muted)' }}>
+        {routeOriginSummaryHelp}
+        {isLiveLocationAccuracyWeak && ' O sinal está mais fraco do que o ideal; se puder, teste perto de uma área aberta.'}
+      </div>
+    </div>
+  );
 
   return (
     <div
+      onPointerDownCapture={handleRootPointerDownCapture}
+      onPointerMoveCapture={handleRootPointerMoveCapture}
+      onPointerUpCapture={handleRootPointerUpCapture}
+      onPointerCancelCapture={handleRootPointerCancelCapture}
       style={{
-        width: '100vw',
-        height: '100dvh',
-        minHeight: '100vh',
+        width: '100%',
+        height: '100%',
+        minHeight: '100dvh',
+        position: 'relative',
         display: 'flex',
         overflow: 'hidden',
-        background: 'var(--color-bg)',
+        background: 'transparent',
       }}
     >
       <div
         style={{
-          width: isAdmin ? '340px' : '0px',
+          position: isCompactAdminLayout ? 'absolute' : 'relative',
+          inset: isCompactAdminLayout ? '0 auto 0 0' : undefined,
+          width: isAdmin ? adminPanelWidth : '0px',
+          maxWidth: '100%',
+          height: isCompactAdminLayout ? '100%' : undefined,
+          maxHeight: isCompactAdminLayout ? '100%' : undefined,
           transition: 'width 0.3s ease',
           background: 'var(--color-surface-strong)',
           borderRight: isAdmin ? '1px solid var(--color-border)' : 'none',
           display: 'flex',
           flexDirection: 'column',
-          boxShadow: isAdmin ? '0 6px 20px rgba(15, 23, 42, 0.12)' : 'none',
+          boxShadow: isAdmin ? '0 6px 20px rgba(106, 56, 208, 0.12)' : 'none',
           zIndex: 1200,
+          overflow: 'hidden',
         }}
       >
         {isAdmin && (
           <>
-            <div style={{ padding: '18px', background: '#1d3248', color: 'white' }}>
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Painel Admin</h2>
-              <p style={{ margin: '6px 0 0 0', fontSize: '12px', opacity: 0.8 }}>
-                {pois.length} pontos cadastrados
-              </p>
-            </div>
+            <input
+              ref={adminImportInputRef}
+              type='file'
+              accept='application/json'
+              onChange={handleAdminImportFileChange}
+              style={{ display: 'none' }}
+            />
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px' }}>
-              {pois.map((poi) => (
-                <button
-                  key={poi.id}
-                  onClick={() => {
-                    setEditingPoi({ ...poi });
-                    setFocusPoint(poi);
-                  }}
+            <div
+              style={{
+                padding: '18px',
+                background: 'linear-gradient(180deg, var(--color-ink-soft), var(--color-ink))',
+                color: 'var(--color-text-inverse)',
+                display: 'grid',
+                gap: 10,
+              }}
+            >
+              <div>
+                <h2 style={{ margin: 0, fontSize: '18px' }}>Painel administrativo</h2>
+                <p style={{ margin: '6px 0 0 0', fontSize: '12px', opacity: 0.82 }}>
+                  Gestão de pontos com base local de segurança. A malha de rotas continua vindo do grafo local do aplicativo.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 8,
+                  padding: 10,
+                  borderRadius: 14,
+                  background: 'rgba(255,255,255,0.18)',
+                  border: '1px solid rgba(255,255,255,0.18)',
+                }}
+              >
+                <div
                   style={{
-                    width: '100%',
-                    border: '1px solid #edf1f4',
-                    borderRadius: '8px',
-                    background: editingPoi?.id === poi.id ? 'var(--color-primary-soft)' : 'white',
-                    marginBottom: '8px',
-                    textAlign: 'left',
-                    padding: '10px',
-                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    width: 'fit-content',
+                    padding: '6px 10px',
+                    borderRadius: 999,
+                    background: currentSourceMeta.tint,
+                    color: currentSourceMeta.tone,
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span
-                      style={{
-                        minWidth: 24,
-                        height: 24,
-                        padding: '0 6px',
-                        borderRadius: 999,
-                        background: getPoiAccentColor(poi),
-                        color: '#ffffff',
-                        border: '1px solid rgba(255,255,255,0.88)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 10,
-                        fontWeight: 800,
-                        letterSpacing: '0.03em',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {getPoiBadgeText(poi)}
-                    </span>
-                    <div style={{ fontWeight: 700, fontSize: '14px', minWidth: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                      {poi.nome}
+                  {currentSourceMeta.label}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.88 }}>{backendSyncLabel}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 12,
+                      background: 'rgba(255,255,255,0.18)',
+                    }}
+                  >
+                    <div style={{ fontSize: 10, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Pontos
                     </div>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>{pois.length}</div>
                   </div>
-                  <div style={{ fontSize: '11px', color: '#5f6c7a', marginTop: '2px' }}>
-                    {poi.tipo.toUpperCase()} {poi.nodeId ? '| conectado' : '| sem rota'}
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 12,
+                      background: 'rgba(255,255,255,0.18)',
+                    }}
+                  >
+                    <div style={{ fontSize: 10, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Rascunhos
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>{draftPoiIds.length}</div>
                   </div>
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 12,
+                      background: 'rgba(255,255,255,0.18)',
+                    }}
+                  >
+                    <div style={{ fontSize: 10, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Publicados
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>{syncedPoiCount}</div>
+                  </div>
+                  <div
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 12,
+                      background: 'rgba(255,255,255,0.18)',
+                    }}
+                  >
+                    <div style={{ fontSize: 10, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Sem rota
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>{disconnectedPoiCount}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: '10px', display: 'grid', gap: 8, borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={startNewPoiDraft}
+                  className='btn btn-primary'
+                  style={{
+                    ...actionButton,
+                    padding: '10px 12px',
+                  }}
+                >
+                  Novo ponto
                 </button>
-              ))}
+                <button
+                  onClick={() => void syncBootstrap({ forceReplace: true })}
+                  className='btn btn-neutral'
+                  style={{
+                    ...actionButton,
+                    padding: '10px 12px',
+                  }}
+                >
+                  Atualizar servidor
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={abrirImportadorJson}
+                  className='btn btn-neutral'
+                  style={{ ...actionButton, padding: '10px 12px' }}
+                >
+                  Importar JSON
+                </button>
+                <button
+                  onClick={publicarRascunhos}
+                  className='btn btn-success'
+                  style={{ ...actionButton, padding: '10px 12px' }}
+                >
+                  Publicar rascunhos
+                </button>
+              </div>
+
+              <input
+                value={adminSearchTerm}
+                onChange={(e) => setAdminSearchTerm(e.target.value)}
+                style={{ ...inputStyle, margin: 0 }}
+                placeholder='Buscar por nome, selo ou id'
+              />
+
+              <select
+                value={adminTypeFilter}
+                onChange={(e) => setAdminTypeFilter(e.target.value as 'todos' | PoiType)}
+                style={{ ...inputStyle, margin: 0 }}
+              >
+                <option value='todos'>Todos os tipos</option>
+                <option value='atividade'>Atividades</option>
+                <option value='servico'>Serviços</option>
+                <option value='banheiro'>Banheiros</option>
+                <option value='entrada'>Entradas</option>
+              </select>
+
+              {adminStatusMessage && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: 'rgba(245, 248, 252, 0.95)',
+                    border: '1px solid rgba(203, 213, 225, 0.8)',
+                    color: 'var(--color-text-muted)',
+                    fontSize: 12,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {adminStatusMessage}
+                </div>
+              )}
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+              {filteredAdminPois.map((poi) => {
+                const isDraft = draftPoiIdSet.has(poi.id);
+                return (
+                  <button
+                    key={poi.id}
+                    onClick={() => {
+                      setEditingPoi({ ...poi });
+                      setFocusPoint(poi);
+                      setActivePoiId(poi.id);
+                    }}
+                    style={{
+                      width: '100%',
+                      border: '1px solid #edf1f4',
+                      borderRadius: '12px',
+                      background: editingPoi?.id === poi.id ? 'var(--color-primary-soft)' : 'white',
+                      marginBottom: '8px',
+                      textAlign: 'left',
+                      padding: '11px',
+                      cursor: 'pointer',
+                      boxShadow: editingPoi?.id === poi.id ? '0 10px 24px rgba(37, 99, 235, 0.08)' : 'none',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        style={{
+                          minWidth: 24,
+                          height: 24,
+                          padding: '0 6px',
+                          borderRadius: 999,
+                          background: getPoiAccentColor(poi),
+                          color: '#ffffff',
+                          border: '1px solid rgba(255,255,255,0.88)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 10,
+                          fontWeight: 800,
+                          letterSpacing: '0.03em',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {getPoiBadgeText(poi)}
+                      </span>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          fontSize: '14px',
+                          minWidth: 0,
+                          textOverflow: 'ellipsis',
+                          overflow: 'hidden',
+                          whiteSpace: 'nowrap',
+                          flex: 1,
+                        }}
+                      >
+                        {poi.nome}
+                      </div>
+                      {isDraft && (
+                        <span
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 999,
+                            background: 'rgba(245, 158, 11, 0.14)',
+                            color: '#9a6700',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            letterSpacing: '0.04em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Rascunho
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#5f6c7a', marginTop: '5px' }}>
+                      {poi.tipo.toUpperCase()} {poi.nodeId ? '| conectado' : '| sem rota'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#7b8794', marginTop: '3px' }}>
+                      x: {Math.round(poi.x)} | y: {Math.round(poi.y)} | id: {poi.id}
+                    </div>
+                  </button>
+                );
+              })}
+
+              {filteredAdminPois.length === 0 && (
+                <div
+                  style={{
+                    padding: '14px',
+                    borderRadius: 14,
+                    border: '1px dashed var(--color-border-strong)',
+                    color: 'var(--color-text-soft)',
+                    fontSize: 12,
+                  }}
+                >
+                  Nenhum ponto encontrado com o filtro atual.
+                </div>
+              )}
             </div>
 
             <div
@@ -1665,6 +3678,13 @@ const ModaCenterMap = () => {
                 gap: '10px',
               }}
             >
+              <button
+                onClick={restaurarFontePrincipal}
+                className='btn btn-neutral'
+                style={{ padding: '12px' }}
+              >
+                Descartar workspace
+              </button>
               <button
                 onClick={baixarJson}
                 className='btn btn-success'
@@ -1686,7 +3706,7 @@ const ModaCenterMap = () => {
         )}
       </div>
 
-      <div style={{ flex: 1, position: 'relative' }}>
+      <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
         {isAdmin && editingPoi && (
           <div
             style={{
@@ -1709,6 +3729,60 @@ const ModaCenterMap = () => {
               {editingPoi.id ? 'Editar ponto' : 'Novo ponto'}
             </h3>
 
+            <div
+              style={{
+                display: 'grid',
+                gap: 8,
+                marginBottom: 12,
+                padding: '10px 12px',
+                borderRadius: 12,
+                background: 'var(--color-surface-soft)',
+                border: '1px solid var(--color-border)',
+              }}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    minHeight: 28,
+                    padding: '0 10px',
+                    borderRadius: 999,
+                    background: editingPoiIsDraft ? 'rgba(217, 200, 255, 0.22)' : 'rgba(106, 56, 208, 0.1)',
+                    color: editingPoiIsDraft ? BRAND_COLORS.ink : BRAND_COLORS.primaryStrong,
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {editingPoiIsDraft ? 'Rascunho local' : 'Sem rascunho pendente'}
+                </span>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    minHeight: 28,
+                    padding: '0 10px',
+                    borderRadius: 999,
+                    background: editingPoiExistsOnBackend ? 'rgba(106, 56, 208, 0.12)' : 'rgba(23, 19, 31, 0.08)',
+                    color: editingPoiExistsOnBackend ? BRAND_COLORS.primaryStrong : BRAND_COLORS.textMuted,
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {editingPoiExistsOnBackend ? 'Já está no servidor' : 'Ainda não publicado'}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                x: {typeof editingPoi.x === 'number' ? Math.round(editingPoi.x) : '-'} | y:{' '}
+                {typeof editingPoi.y === 'number' ? Math.round(editingPoi.y) : '-'} | node:{' '}
+                {editingPoi.nodeId || 'sem conexão'}
+              </div>
+            </div>
+
             <label className='map-input-label'>Nome</label>
             <input
               value={editingPoi.nome || ''}
@@ -1724,7 +3798,7 @@ const ModaCenterMap = () => {
               style={inputStyle}
             >
               <option value='atividade'>Atividade</option>
-              <option value='servico'>Servico</option>
+              <option value='servico'>Serviço</option>
               <option value='banheiro'>Banheiro</option>
               <option value='entrada'>Entrada</option>
             </select>
@@ -1758,15 +3832,15 @@ const ModaCenterMap = () => {
               value={editingPoi.corDestaque || ''}
               onChange={(e) => setEditingPoi({ ...editingPoi, corDestaque: e.target.value })}
               style={inputStyle}
-              placeholder='#db2777'
+              placeholder={BRAND_COLORS.primary}
             />
             {hasInvalidEditingAccentColor && (
-              <div style={{ marginTop: '-7px', marginBottom: 8, fontSize: 11, color: '#b91c1c' }}>
-                Use um valor no formato `#RRGGBB` ou deixe vazio para cor automatica.
+              <div style={{ marginTop: '-7px', marginBottom: 8, fontSize: 11, color: 'var(--color-primary-strong)' }}>
+                Use apenas cores da paleta: `#6a38d0`, `#4b229f`, `#8d6fe7` ou `#d9c8ff`.
               </div>
             )}
 
-            <label className='map-input-label'>Selo do pin (opcional)</label>
+            <label className='map-input-label'>Selo do ponto (opcional)</label>
             <input
               value={editingPoi.selo || ''}
               onChange={(e) => setEditingPoi({ ...editingPoi, selo: e.target.value })}
@@ -1805,29 +3879,47 @@ const ModaCenterMap = () => {
                 {editingBadgePreview}
               </span>
               <span style={{ fontSize: 11, color: '#4f647d' }}>
-                Preview do destaque visual deste ponto.
+                Prévia do destaque visual deste ponto.
               </span>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
-              <button onClick={salvarPonto} style={{ ...actionButton }} className='btn btn-primary'>
-                Salvar
-              </button>
-              {editingPoi.id && (
-                <button
-                  onClick={() => deletarPonto(editingPoi.id!)}
-                  style={{ ...actionButton, width: '56px', flex: 'unset' }}
-                  className='btn btn-danger'
-                >
-                  Del
+            <div style={{ display: 'grid', gap: 10, marginTop: '12px' }}>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={salvarRascunhoPonto} style={{ ...actionButton }} className='btn btn-neutral'>
+                  Salvar rascunho
                 </button>
-              )}
+                <button onClick={salvarPonto} style={{ ...actionButton }} className='btn btn-primary'>
+                  Publicar agora
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                {editingPoi.id && (
+                  <button
+                    onClick={() => removerPontoLocal(editingPoi.id!)}
+                    style={{ ...actionButton }}
+                    className='btn btn-neutral'
+                  >
+                    Remover local
+                  </button>
+                )}
+                {editingPoi.id && editingPoiExistsOnBackend && (
+                  <button
+                    onClick={() => deletarPonto(editingPoi.id!)}
+                    style={{ ...actionButton }}
+                    className='btn btn-danger'
+                  >
+                    Excluir do servidor
+                  </button>
+                )}
+              </div>
+
               <button
                 onClick={() => setEditingPoi(null)}
-                style={{ ...actionButton, width: '56px', flex: 'unset' }}
+                style={{ ...actionButton, width: '100%' }}
                 className='btn btn-neutral'
               >
-                X
+                Fechar
               </button>
             </div>
           </div>
@@ -1836,155 +3928,528 @@ const ModaCenterMap = () => {
         {!isAdmin && (
           <div className='map-brand-header'>
             <span className='map-brand-icon-shell'>
-              <img src={brandIcon} alt='Logo Gnomon' className='map-brand-icon' />
+              <img src={brandIcon} alt='Logo do evento' className='map-brand-icon' />
             </span>
-            <span className='map-brand-label'>GNOMON</span>
           </div>
         )}
 
         {!isAdmin && (
           <div
-            style={{
-              position: 'absolute',
-              left: '50%',
-              bottom: isMobile
-                ? 'calc(8px + env(safe-area-inset-bottom, 0px))'
-                : 14,
-              transform: 'translateX(-50%)',
-              zIndex: 1120,
-              display: 'grid',
-              gap: 8,
-              alignItems: 'center',
-              padding: isActionDockExpanded ? '8px' : '6px',
-              width: isActionDockExpanded
-                ? isMobile
-                  ? 'calc(100vw - 12px)'
-                  : 'min(500px, calc(100vw - 30px))'
-                : isMobile
-                  ? 'calc(100vw - 12px)'
-                  : 'min(400px, calc(100vw - 30px))',
-            }}
-            className={`map-surface-toolbar map-action-dock ${isActionDockExpanded ? 'expanded' : 'collapsed'}`}
+            style={
+              {
+                position: 'fixed',
+                left: '50%',
+                bottom: dockBottom,
+                transform: 'translateX(-50%)',
+                zIndex: 3200,
+                width: dockWidth,
+              } as CSSProperties
+            }
+            className={`map-surface-toolbar map-action-dock ${isDockPanelOpen ? `sheet-open panel-${activeDockPanel}` : ''}`}
           >
-            <button
-              type='button'
-              onPointerDown={handleActionDockPointerDown}
-              onPointerMove={handleActionDockPointerMove}
-              onPointerUp={finalizeActionDockDrag}
-              onPointerCancel={finalizeActionDockDrag}
-              onClick={handleActionDockClick}
-              className='map-dock-handle'
-              aria-label='Arrastar botoes de acao'
-              aria-expanded={isActionDockExpanded}
-            >
-              <span className='map-dock-handle-grab' />
-              <span className='map-dock-handle-title'>
-                {isActionDockExpanded
-                  ? 'Arraste para baixo para esconder'
-                  : 'Arraste para cima para abrir acoes'}
-              </span>
-              {!isActionDockExpanded && (
-                <span className='map-dock-quick-strip' aria-hidden='true'>
-                  <span className={`map-dock-quick-item ${isPinsPanelOpen ? 'active' : ''}`}>
-                    <span className='map-dock-quick-icon'>
-                      <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
-                        <path d='M4 9L12 3L20 9V19A2 2 0 0 1 18 21H6A2 2 0 0 1 4 19V9Z' />
-                        <path d='M9 21V13H15V21' />
-                      </svg>
-                    </span>
-                    <span className='map-dock-quick-text'>Pins</span>
-                  </span>
-                  <span className={`map-dock-quick-item ${isRoutePanelOpen ? 'active' : ''}`}>
-                    <span className='map-dock-quick-icon'>
-                      <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
-                        <circle cx='7' cy='17' r='2.2' />
-                        <circle cx='17' cy='7' r='2.2' />
-                        <path d='M9.4 15.6L14.6 10.4' />
-                        <path d='M11.5 6.3H7.8A2.8 2.8 0 0 0 5 9.1V12.7' />
-                        <path d='M12.5 17.7H16.2A2.8 2.8 0 0 0 19 14.9V11.3' />
-                      </svg>
-                    </span>
-                    <span className='map-dock-quick-text'>Rota</span>
-                  </span>
-                  {!isPresentationMode && (
-                    <span className='map-dock-quick-item'>
-                      <span className='map-dock-quick-icon'>
-                        <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
-                          <rect x='4' y='4' width='7' height='7' rx='1.5' />
-                          <rect x='13' y='4' width='7' height='7' rx='1.5' />
-                          <rect x='4' y='13' width='7' height='7' rx='1.5' />
-                          <rect x='13' y='13' width='7' height='7' rx='1.5' />
-                        </svg>
-                      </span>
-                      <span className='map-dock-quick-text'>Menu</span>
-                    </span>
-                  )}
-                </span>
-              )}
-            </button>
+            <div className={`map-action-sheet-body ${isDockPanelOpen ? 'active' : ''}`}>
+              <div className='map-action-sheet-scroll'>
+                {activeDockPanel === 'pins' && (
+                  <div className='map-sheet-panel map-sheet-panel-pins'>
+                    <div className='pin-panel-hero'>
+                      <div>
+                        <div className='map-sheet-eyebrow'>Descoberta inteligente</div>
+                        <div className='map-panel-title'>Explorar locais</div>
+                        <div className='pin-panel-subtitle'>
+                          Encontre atividades e serviços do evento com foco rápido no mapa.
+                        </div>
+                      </div>
+                      <button
+                        onClick={closeDockPanel}
+                        className='pin-panel-close'
+                        title='Fechar painel de locais'
+                      >
+                        x
+                      </button>
+                    </div>
 
-            {isActionDockExpanded && (
-              <div className='map-action-dock-buttons'>
-                <button
-                  onClick={() => {
-                    setIsPinsPanelOpen((prev) => !prev);
-                    setIsRoutePanelOpen(false);
-                  }}
-                  className={`map-toggle-btn ${isPinsPanelOpen ? 'active' : ''}`}
-                >
-                  Pins ({visiblePois.length})
-                </button>
-                <button
-                  onClick={() => {
-                    setIsRoutePanelOpen((prev) => !prev);
-                    setIsPinsPanelOpen(false);
-                  }}
-                  className={`map-toggle-btn ${isRoutePanelOpen ? 'active' : ''}`}
-                >
-                  Rota
-                </button>
-                {!isPresentationMode && (
-                  <button
-                    onClick={() => {
-                      setTutorialStepIndex(0);
-                      setIsTutorialOpen(true);
-                    }}
-                    className='map-toggle-btn'
-                  >
-                    Tutorial
-                  </button>
+                    <div className='pin-search-box'>
+                      <input
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder='Buscar atividade, serviço, banheiro ou entrada...'
+                        className='map-input pin-search-input'
+                        style={{ ...inputStyle, marginBottom: 0 }}
+                      />
+                      <span className='pin-search-label'>Buscar</span>
+                    </div>
+
+                    <div className='pin-filter-row'>
+                      {(Object.keys(poiTypeLabels) as PoiType[]).map((type) => (
+                        <button
+                          key={`filter_${type}`}
+                          onClick={() => toggleType(type)}
+                          className={`map-chip pin-filter-chip pin-filter-chip-${type} ${enabledTypes[type] ? 'active' : ''}`}
+                        >
+                          <span className={`pin-filter-dot pin-filter-dot-${type}`} />
+                          {poiTypeLabels[type]}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className='pin-panel-meta'>
+                      <span>{`${searchablePois.length} locais prontos para explorar`}</span>
+                      {!isPresentationMode && (
+                        <button
+                          onClick={() => setManualVisiblePoiIds([])}
+                          disabled={manualVisiblePoiIds.length === 0}
+                          className='map-inline-link'
+                          style={{ color: manualVisiblePoiIds.length > 0 ? 'var(--color-primary)' : 'var(--color-text-soft)' }}
+                        >
+                          Modo inteligente
+                        </button>
+                      )}
+                    </div>
+
+                    {arePinsHiddenByZoom && (
+                      <div className='map-sheet-inline-status'>
+                        Aproxime o mapa para revelar os pontos na tela. A lista continua disponível logo abaixo.
+                      </div>
+                    )}
+
+                    <div className='map-list-shell pin-results-shell'>
+                      {searchablePois.map((poi) => {
+                        const checked = manualVisiblePoiIds.includes(poi.id);
+                        const accentColor = getPoiAccentColor(poi);
+                        return (
+                          <div
+                            key={`catalog_${poi.id}`}
+                            className={`map-list-item pin-result-row ${checked ? 'active' : ''}`}
+                            style={{
+                              gridTemplateColumns: isPresentationMode ? '1fr auto' : '22px 1fr auto',
+                              borderLeft: `3px solid ${accentColor}`,
+                            }}
+                          >
+                            {!isPresentationMode && (
+                              <input
+                                className='pin-select-check'
+                                type='checkbox'
+                                checked={checked}
+                                onChange={() => toggleManualVisibility(poi.id)}
+                                title='Controlar visibilidade manual deste ponto'
+                              />
+                            )}
+                            <button
+                              onClick={() => focusPoi(poi, true)}
+                              className='pin-result-main'
+                            >
+                              <span
+                                className={`pin-result-type-mark pin-result-type-mark-${poi.tipo}`}
+                                style={{
+                                  background: accentColor,
+                                  boxShadow: `0 0 0 3px ${mixColors(accentColor, '#ffffff', 0.74)}`,
+                                }}
+                              />
+                              <span className='pin-result-text'>
+                                <span className='pin-result-title'>{poi.nome}</span>
+                                <span className='pin-result-subtitle'>{poiTypeSingularLabels[poi.tipo]}</span>
+                              </span>
+                            </button>
+                            <button
+                              onClick={() => focusPoi(poi, true)}
+                              className='pin-result-open'
+                            >
+                              Ver
+                            </button>
+                          </div>
+                        );
+                      })}
+
+                      {searchablePois.length === 0 && (
+                        <div className='pin-empty-state'>
+                          Nenhum ponto encontrado para esse filtro.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {activeDockPanel === 'agenda' && (
+                  <div className='agenda-panel-shell map-sheet-panel map-sheet-panel-agenda'>
+                    <div className='agenda-panel-hero'>
+                      <div className='agenda-panel-hero-copy'>
+                        <div className='map-sheet-eyebrow'>Programação oficial</div>
+                        <div className='map-panel-title'>Cronograma do evento</div>
+                        <div className='agenda-panel-subtitle'>
+                          Sábado 21 é o único dia do evento, com palco principal, Arena Porto Digital e Arena Experiência organizados por horário e espaço.
+                        </div>
+                      </div>
+                      <button
+                        onClick={closeDockPanel}
+                        className='pin-panel-close'
+                        title='Fechar cronograma'
+                      >
+                        x
+                      </button>
+                    </div>
+
+                    <div className='agenda-panel-highlights'>
+                      <article className='agenda-highlight-card'>
+                        <span className='agenda-highlight-label'>Janela do dia</span>
+                        <strong className='agenda-highlight-value'>{agendaDayStats.windowLabel}</strong>
+                      </article>
+                      <article className='agenda-highlight-card'>
+                        <span className='agenda-highlight-label'>Sessões</span>
+                        <strong className='agenda-highlight-value'>{agendaDayStats.sessionCount}</strong>
+                      </article>
+                      <article className='agenda-highlight-card'>
+                        <span className='agenda-highlight-label'>Palestrantes</span>
+                        <strong className='agenda-highlight-value'>{agendaDayStats.speakerCount}</strong>
+                      </article>
+                      <article className='agenda-highlight-card'>
+                        <span className='agenda-highlight-label'>No mapa</span>
+                        <strong className='agenda-highlight-value'>{`${agendaDayStats.connectedCount}/${agendaDayStats.sessionCount}`}</strong>
+                      </article>
+                    </div>
+
+                    <div className='agenda-day-strip' role='tablist' aria-label='Dia do cronograma'>
+                      {agendaDays.map((day) => (
+                        <button
+                          key={`agenda_day_${day.id}`}
+                          onClick={() => setSelectedAgendaDay(day.id)}
+                          className={`agenda-day-chip ${selectedAgendaDay === day.id ? 'active' : ''}`}
+                          role='tab'
+                          aria-selected={selectedAgendaDay === day.id}
+                        >
+                          <span className='agenda-day-weekday'>{day.weekday}</span>
+                          <span className='agenda-day-number'>{day.dateLabel}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className='agenda-panel-caption'>
+                      {selectedAgendaDayMeta.weekday} {selectedAgendaDayMeta.dateLabel} reúne toda a programação oficial em um único dia, com paralelos organizados por horário e espaço.
+                    </div>
+
+                    <div className='agenda-session-list'>
+                      {agendaSessionsForSelectedDay.map((session, index) => {
+                        const isFavorite = favoriteAgendaIds.includes(session.id);
+                        const matchedPoi = getAgendaSessionPoi(session);
+                        const durationLabel = formatAgendaDuration(session.startTime, session.endTime);
+
+                        return (
+                          <article
+                            key={session.id}
+                            className={`agenda-session-card ${matchedPoi ? 'interactive' : ''}`}
+                            style={{ '--agenda-accent': session.accent } as CSSProperties}
+                            onClick={matchedPoi ? () => handleAgendaSessionFocus(session) : undefined}
+                            onKeyDown={
+                              matchedPoi
+                                ? (event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      handleAgendaSessionFocus(session);
+                                    }
+                                  }
+                                : undefined
+                            }
+                            role={matchedPoi ? 'button' : undefined}
+                            tabIndex={matchedPoi ? 0 : undefined}
+                          >
+                            <div className='agenda-session-rail'>
+                              <span className='agenda-session-day-badge'>{`${session.weekday} ${session.dateLabel}`}</span>
+                              <span className='agenda-session-time'>{session.startTime}</span>
+                              <span className='agenda-session-time agenda-session-time-end'>{session.endTime}</span>
+                              <span className='agenda-session-duration'>{durationLabel}</span>
+                            </div>
+
+                            <div className='agenda-session-main'>
+                              <div className='agenda-session-topline'>
+                                <div className='agenda-session-topline-tags'>
+                                  <span className='agenda-session-tag'>{session.category}</span>
+                                  {index === 0 && <span className='agenda-session-priority-badge'>Em destaque</span>}
+                                </div>
+                                <button
+                                  type='button'
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    toggleAgendaFavorite(session.id);
+                                  }}
+                                  className={`agenda-favorite-btn ${isFavorite ? 'active' : ''}`}
+                                  aria-pressed={isFavorite}
+                                  title={isFavorite ? 'Remover dos favoritos' : 'Salvar nos favoritos'}
+                                >
+                                  <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                                    <path d='M12 20.2L10.6 18.9C5.6 14.3 2.4 11.4 2.4 7.8C2.4 5.2 4.4 3.2 7 3.2C8.5 3.2 9.9 3.9 10.8 5.1L12 6.6L13.2 5.1C14.1 3.9 15.5 3.2 17 3.2C19.6 3.2 21.6 5.2 21.6 7.8C21.6 11.4 18.4 14.3 13.4 18.9L12 20.2Z' />
+                                  </svg>
+                                </button>
+                              </div>
+
+                              <div className='agenda-session-title'>{session.title}</div>
+                              <div className='agenda-session-summary'>{session.summary}</div>
+
+                              <div className='agenda-session-meta'>
+                                <span className='agenda-session-meta-item'>{session.venue}</span>
+                                <span className='agenda-session-meta-separator' />
+                                <span className='agenda-session-meta-item'>{session.audience}</span>
+                                <span className='agenda-session-meta-separator' />
+                                <span className='agenda-session-meta-item'>{durationLabel}</span>
+                              </div>
+
+                              <div className='agenda-speaker-row'>
+                                <div className='agenda-speaker-stack'>
+                                  {session.speakers.map((speaker) => (
+                                    <span key={`${session.id}_${speaker.name}`} className='agenda-speaker-avatar' title={speaker.name}>
+                                      {speaker.name
+                                        .split(' ')
+                                        .slice(0, 2)
+                                        .map((part) => part.charAt(0))
+                                        .join('')}
+                                    </span>
+                                  ))}
+                                </div>
+                                <div className='agenda-speaker-copy'>
+                                  <span className='agenda-speaker-roleline'>
+                                    {session.speakers.map((speaker) => speaker.role).join(' / ')}
+                                  </span>
+                                  {session.speakers.map((speaker) => speaker.name).join(' • ')}
+                                </div>
+                              </div>
+
+                              <div className='agenda-session-footer'>
+                                <span className='agenda-session-status'>
+                                  {isFavorite ? 'Salvo para você' : 'Sugestão para você'}
+                                </span>
+                                <button
+                                  type='button'
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleAgendaSessionFocus(session);
+                                  }}
+                                  className='agenda-session-map-link'
+                                  disabled={!matchedPoi}
+                                >
+                                  <span>{matchedPoi ? 'Ver no mapa' : 'Sem local vinculado'}</span>
+                                  {matchedPoi && (
+                                    <svg viewBox='0 0 20 20' aria-hidden='true'>
+                                      <path d='M6 10H14' />
+                                      <path d='M10.5 6.5L14 10L10.5 13.5' />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {activeDockPanel === 'route' && (
+                  <div className='map-sheet-panel map-sheet-panel-route'>
+                    <div className='route-panel-hero'>
+                      <div>
+                        <div className='map-sheet-eyebrow'>Navegação guiada</div>
+                        <div className='map-panel-title'>Painel de rota</div>
+                        <div className='route-panel-subtitle'>
+                          Escolha o destino e deixe a origem automática cuidar do restante.
+                        </div>
+                      </div>
+                      <button
+                        onClick={closeDockPanel}
+                        className='pin-panel-close'
+                        title='Fechar painel de rota'
+                      >
+                        x
+                      </button>
+                    </div>
+
+                    {liveLocationCard}
+
+                    <div className='route-field-grid'>
+                      <div className='route-auto-origin-card'>
+                        <span className='route-auto-origin-label'>Origem automática</span>
+                        <strong className='route-auto-origin-name'>{routeOriginSummaryName}</strong>
+                        <span className='route-auto-origin-help'>{routeOriginSummaryHelp}</span>
+                      </div>
+
+                      <div className='route-field-card'>
+                        <label className='map-input-label route-field-label'>Destino</label>
+                        <div className='route-field-input-wrap'>
+                          <input
+                            value={destinationQuery}
+                            onChange={(e) => {
+                              setDestinationQuery(e.target.value);
+                              setSelectedDestinationId('');
+                              setShowDestinationSuggestions(true);
+                            }}
+                            onFocus={() => setShowDestinationSuggestions(true)}
+                            onBlur={() => window.setTimeout(() => setShowDestinationSuggestions(false), 120)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && destinationSuggestions.length > 0) {
+                                e.preventDefault();
+                                selectDestinationPoi(destinationSuggestions[0]);
+                              }
+                            }}
+                            autoFocus={isMobile}
+                            className='map-input route-field-input'
+                            style={{ ...inputStyle, margin: 0 }}
+                            placeholder='Ex.: Palco Principal, banheiro...'
+                          />
+                          <span className='route-field-hint'>Selecione um destino ou toque em um ponto no mapa</span>
+                          {showDestinationSuggestions && (
+                            <div className='route-suggestions'>
+                              {destinationSuggestions.map((poi) => (
+                                <button
+                                  key={`destination_suggestion_${poi.id}`}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => selectDestinationPoi(poi)}
+                                  className='route-suggestion-item'
+                                >
+                                  <span className='route-suggestion-name'>{poi.nome}</span>
+                                  <span className='route-suggestion-type'>{poi.tipo.toUpperCase()}</span>
+                                </button>
+                              ))}
+                              {destinationSuggestions.length === 0 && (
+                                <div className='route-suggestion-empty'>Nenhuma sugestão para destino.</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className='route-action-row'>
+                      <button onClick={clearRoute} style={{ ...actionButton }} className='btn btn-neutral route-secondary-action'>
+                        Limpar
+                      </button>
+                    </div>
+
+                    <div className='route-feedback-card'>
+                      <div className='route-feedback-title'>Resumo da navegação</div>
+                      <div className='route-feedback-text'>{routeMessage}</div>
+                    </div>
+
+                    {routeDistanceMeters > 0 && (
+                      <div className='route-metrics-card'>
+                        <div className='route-metric-item'>
+                          <span className='route-metric-label'>Distância</span>
+                          <span className='route-metric-value'>{formatDistanceLabel(routeDistanceMeters)}</span>
+                        </div>
+                        <div className='route-metric-item'>
+                          <span className='route-metric-label'>Tempo médio</span>
+                          <span className='route-metric-value'>{formatWalkingTimeLabel(routeEtaMinutes)}</span>
+                        </div>
+                        {!isPresentationMode && (
+                          <div className='route-metric-item'>
+                            <span className='route-metric-label'>{routeMetricLabel}</span>
+                            <span className='route-metric-value'>{routeMetricValue}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
+            </div>
+
+            <div className='map-action-dock-buttons'>
+              <button
+                onClick={() => toggleDockPanel('agenda')}
+                className={`map-toggle-btn map-toggle-btn-agenda ${activeDockPanel === 'agenda' ? 'active' : ''} ${activeDockPanel && activeDockPanel !== 'agenda' ? 'dimmed' : ''}`}
+                aria-pressed={activeDockPanel === 'agenda'}
+              >
+                <span className='map-toggle-btn-icon' aria-hidden='true'>
+                  <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                    <rect x='4' y='5' width='16' height='15' rx='2.4' />
+                    <path d='M8 3.5V7' />
+                    <path d='M16 3.5V7' />
+                    <path d='M4 9.5H20' />
+                    <path d='M8 13H11' />
+                    <path d='M13 13H16' />
+                    <path d='M8 16.5H11' />
+                  </svg>
+                </span>
+                <span className='map-toggle-btn-label'>Cronograma</span>
+              </button>
+              <button
+                onClick={() => toggleDockPanel('pins')}
+                className={`map-toggle-btn map-toggle-btn-pins ${activeDockPanel === 'pins' ? 'active' : ''} ${activeDockPanel && activeDockPanel !== 'pins' ? 'dimmed' : ''}`}
+                aria-pressed={activeDockPanel === 'pins'}
+              >
+                <span className='map-toggle-btn-icon' aria-hidden='true'>
+                  <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                    <path d='M4 9L12 3L20 9V19A2 2 0 0 1 18 21H6A2 2 0 0 1 4 19V9Z' />
+                    <path d='M9 21V13H15V21' />
+                  </svg>
+                </span>
+                <span className='map-toggle-btn-label'>Locais</span>
+              </button>
+              <button
+                onClick={() => toggleDockPanel('route')}
+                className={`map-toggle-btn map-toggle-btn-route ${activeDockPanel === 'route' ? 'active' : ''} ${activeDockPanel && activeDockPanel !== 'route' ? 'dimmed' : ''}`}
+                aria-pressed={activeDockPanel === 'route'}
+              >
+                <span className='map-toggle-btn-icon' aria-hidden='true'>
+                  <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                    <circle cx='7' cy='17' r='2.2' />
+                    <circle cx='17' cy='7' r='2.2' />
+                    <path d='M9.4 15.6L14.6 10.4' />
+                    <path d='M11.5 6.3H7.8A2.8 2.8 0 0 0 5 9.1V12.7' />
+                    <path d='M12.5 17.7H16.2A2.8 2.8 0 0 0 19 14.9V11.3' />
+                  </svg>
+                </span>
+                <span className='map-toggle-btn-label'>Rotas</span>
+              </button>
+              {!isPresentationMode && (
+                <button
+                  onClick={() => {
+                    setTutorialStepIndex(0);
+                    closeDockPanel();
+                    setIsTutorialOpen(true);
+                  }}
+                  className={`map-toggle-btn ${isTutorialOpen ? 'active' : ''} ${activeDockPanel ? 'dimmed' : ''}`}
+                  aria-pressed={isTutorialOpen}
+                >
+                  <span className='map-toggle-btn-icon' aria-hidden='true'>
+                    <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                      <rect x='4' y='4' width='7' height='7' rx='1.5' />
+                      <rect x='13' y='4' width='7' height='7' rx='1.5' />
+                      <rect x='4' y='13' width='7' height='7' rx='1.5' />
+                      <rect x='13' y='13' width='7' height='7' rx='1.5' />
+                    </svg>
+                  </span>
+                  <span className='map-toggle-btn-label'>Tutorial</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
 
-        {!isAdmin && isPinsPanelOpen && (
+        {false && !isAdmin && isPinsPanelOpen && (
           <div
             style={{
-              position: 'absolute',
-              top: panelTopOffset,
-              left: isMobile ? 8 : 70,
-              right: isMobile ? 8 : 'auto',
-              zIndex: 1110,
-              width: isMobile ? 'calc(100vw - 16px)' : 360,
-              maxHeight: isMobile ? 'calc(44dvh - env(safe-area-inset-bottom, 0px))' : '60vh',
+              position: 'fixed',
+              top: dockPanelTop,
+              left: '50%',
+              right: 'auto',
+              bottom: dockPanelBottom,
+              transform: 'translateX(-50%)',
+              zIndex: 3210,
+              width: dockWidth,
+              maxHeight: 'none',
               overflowY: 'auto',
-              padding: isMobile ? 10 : 12,
+              padding: isMobile ? 12 : 14,
             }}
-            className='map-floating-panel'
+            className='map-floating-panel dock-sheet-panel'
           >
             <div className='pin-panel-hero'>
               <div>
                 <div className='map-panel-title'>Explorar locais</div>
                 <div className='pin-panel-subtitle'>
-                  Encontre atividades e servicos do evento com foco rapido no mapa.
+                  Encontre atividades e serviços do evento com foco rápido no mapa.
                 </div>
               </div>
               <button
                 onClick={() => setIsPinsPanelOpen(false)}
                 className='pin-panel-close'
-                title='Fechar painel de pins'
+                title='Fechar painel de locais'
               >
                 x
               </button>
@@ -1994,7 +4459,7 @@ const ModaCenterMap = () => {
               <input
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder='Buscar atividade, servico, banheiro ou entrada...'
+                placeholder='Buscar atividade, serviço, banheiro ou entrada...'
                 className='map-input pin-search-input'
                 style={{ ...inputStyle, marginBottom: 0 }}
               />
@@ -2015,7 +4480,7 @@ const ModaCenterMap = () => {
             </div>
 
             <div className='pin-panel-meta'>
-              <span>{isPresentationMode ? `${searchablePois.length} resultados` : `${visiblePois.length} visiveis`}</span>
+              <span>{isPresentationMode ? `${searchablePois.length} resultados` : `${visiblePois.length} visíveis`}</span>
               {!isPresentationMode && (
                 <button
                   onClick={() => setManualVisiblePoiIds([])}
@@ -2053,7 +4518,7 @@ const ModaCenterMap = () => {
                         type='checkbox'
                         checked={checked}
                         onChange={() => toggleManualVisibility(poi.id)}
-                        title='Controlar visibilidade manual deste pin'
+                        title='Controlar visibilidade manual deste ponto'
                       />
                     )}
                     <button
@@ -2090,28 +4555,181 @@ const ModaCenterMap = () => {
             </div>
           </div>
         )}
-        {!isAdmin && isRoutePanelOpen && (
+        {false && !isAdmin && isAgendaPanelOpen && (
           <div
             style={{
-              position: 'absolute',
-              top: isMobile ? panelTopOffset : 'auto',
-              left: isMobile ? 8 : 70,
-              right: isMobile ? 8 : 'auto',
-              bottom: isMobile ? 'auto' : 18,
-              zIndex: 1110,
-              width: isMobile ? 'calc(100vw - 16px)' : 360,
-              maxHeight: isMobile ? 'calc(46dvh - env(safe-area-inset-bottom, 0px))' : '46vh',
+              position: 'fixed',
+              top: dockPanelTop,
+              left: '50%',
+              right: 'auto',
+              bottom: dockPanelBottom,
+              transform: 'translateX(-50%)',
+              zIndex: 3210,
+              width: dockWidth,
+              maxHeight: 'none',
               overflowY: 'auto',
-              padding: isMobile ? 10 : 12,
+              padding: isMobile ? 12 : 14,
             }}
-            className='map-floating-panel'
+            className='map-floating-panel agenda-panel-shell dock-sheet-panel'
+          >
+            <div className='agenda-panel-hero'>
+              <div>
+                <div className='agenda-panel-eyebrow'>Programação oficial</div>
+                <div className='map-panel-title'>Cronograma do evento</div>
+                <div className='agenda-panel-subtitle'>
+                  Sábado 21 é o único dia do evento, com palco principal, Arena Porto Digital e Arena Experiência organizados por horário e espaço.
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAgendaPanelOpen(false)}
+                className='pin-panel-close'
+                title='Fechar cronograma'
+              >
+                x
+              </button>
+            </div>
+
+            <div className='agenda-day-strip' role='tablist' aria-label='Dia do cronograma'>
+              {agendaDays.map((day) => (
+                <button
+                  key={`agenda_day_${day.id}`}
+                  onClick={() => setSelectedAgendaDay(day.id)}
+                  className={`agenda-day-chip ${selectedAgendaDay === day.id ? 'active' : ''}`}
+                  role='tab'
+                  aria-selected={selectedAgendaDay === day.id}
+                >
+                  <span className='agenda-day-weekday'>{day.weekday}</span>
+                  <span className='agenda-day-number'>{day.dateLabel}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className='agenda-panel-caption'>
+              {selectedAgendaDayMeta.weekday} {selectedAgendaDayMeta.dateLabel} reúne toda a programação oficial em um único dia, com paralelos organizados por horário e espaço.
+            </div>
+
+            <div className='agenda-session-list'>
+              {agendaSessionsForSelectedDay.map((session) => {
+                const isFavorite = favoriteAgendaIds.includes(session.id);
+                const matchedPoi = getAgendaSessionPoi(session);
+
+                return (
+                  <article
+                    key={session.id}
+                    className='agenda-session-card'
+                    style={{ '--agenda-accent': session.accent } as CSSProperties}
+                    onClick={matchedPoi ? () => handleAgendaSessionFocus(session) : undefined}
+                    onKeyDown={
+                      matchedPoi
+                        ? (event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              handleAgendaSessionFocus(session);
+                            }
+                          }
+                        : undefined
+                    }
+                    role={matchedPoi ? 'button' : undefined}
+                    tabIndex={matchedPoi ? 0 : undefined}
+                  >
+                    <div className='agenda-session-rail'>
+                      <span className='agenda-session-time'>{session.startTime}</span>
+                      <span className='agenda-session-time agenda-session-time-end'>{session.endTime}</span>
+                    </div>
+
+                    <div className='agenda-session-main'>
+                      <div className='agenda-session-topline'>
+                        <span className='agenda-session-tag'>{session.category}</span>
+                        <button
+                          type='button'
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleAgendaFavorite(session.id);
+                          }}
+                          className={`agenda-favorite-btn ${isFavorite ? 'active' : ''}`}
+                          aria-pressed={isFavorite}
+                          title={isFavorite ? 'Remover dos favoritos' : 'Salvar nos favoritos'}
+                        >
+                          <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
+                            <path d='M12 20.2L10.6 18.9C5.6 14.3 2.4 11.4 2.4 7.8C2.4 5.2 4.4 3.2 7 3.2C8.5 3.2 9.9 3.9 10.8 5.1L12 6.6L13.2 5.1C14.1 3.9 15.5 3.2 17 3.2C19.6 3.2 21.6 5.2 21.6 7.8C21.6 11.4 18.4 14.3 13.4 18.9L12 20.2Z' />
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div className='agenda-session-title'>{session.title}</div>
+                      <div className='agenda-session-summary'>{session.summary}</div>
+
+                      <div className='agenda-session-meta'>
+                        <span className='agenda-session-meta-item'>{session.venue}</span>
+                        <span className='agenda-session-meta-separator' />
+                        <span className='agenda-session-meta-item'>{session.audience}</span>
+                      </div>
+
+                      <div className='agenda-speaker-row'>
+                        <div className='agenda-speaker-stack'>
+                          {session.speakers.map((speaker) => (
+                            <span key={`${session.id}_${speaker.name}`} className='agenda-speaker-avatar' title={speaker.name}>
+                              {speaker.name
+                                .split(' ')
+                                .slice(0, 2)
+                                .map((part) => part.charAt(0))
+                                .join('')}
+                            </span>
+                          ))}
+                        </div>
+                        <div className='agenda-speaker-copy'>
+                          {session.speakers.map((speaker) => speaker.name).join(' • ')}
+                        </div>
+                      </div>
+
+                      <div className='agenda-session-footer'>
+                        <span className='agenda-session-status'>
+                          {isFavorite ? 'Salvo para você' : 'Sugestão para você'}
+                        </span>
+                        <button
+                          type='button'
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleAgendaSessionFocus(session);
+                          }}
+                          className='agenda-session-map-link'
+                          disabled={!matchedPoi}
+                        >
+                          {matchedPoi ? 'Ver no mapa' : 'Sem local vinculado'}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {false && !isAdmin && isRoutePanelOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              top: dockPanelTop,
+              left: '50%',
+              right: 'auto',
+              bottom: dockPanelBottom,
+              transform: 'translateX(-50%)',
+              zIndex: 3210,
+              width: dockWidth,
+              maxHeight: 'none',
+              overflowY: 'auto',
+              padding: isMobile ? 12 : 14,
+            }}
+            className='map-floating-panel dock-sheet-panel'
           >
             <div className='route-panel-hero'>
               <div>
-                <div className='route-panel-eyebrow'>Navegacao guiada</div>
+                <div className='route-panel-eyebrow'>Navegação guiada</div>
                 <div className='map-panel-title'>Painel de rota</div>
                 <div className='route-panel-subtitle'>
-                  Defina origem e destino para seguir o melhor caminho durante o evento.
+                  {isMobile
+                    ? 'Arraste o dock para cima, digite seu destino e deixe a origem ser sugerida automaticamente.'
+                    : 'Defina origem e destino para seguir o melhor caminho durante o evento.'}
                 </div>
               </div>
               <button
@@ -2123,50 +4741,67 @@ const ModaCenterMap = () => {
               </button>
             </div>
 
+            {liveLocationCard}
+
             <div className='route-field-grid'>
-              <div className='route-field-card'>
-                <label className='map-input-label route-field-label'>Origem</label>
-                <div className='route-field-input-wrap'>
-                  <input
-                    value={originQuery}
-                    onChange={(e) => {
-                      setOriginQuery(e.target.value);
-                      setSelectedOriginId('');
-                      setShowOriginSuggestions(true);
-                    }}
-                    onFocus={() => setShowOriginSuggestions(true)}
-                    onBlur={() => window.setTimeout(() => setShowOriginSuggestions(false), 120)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && originSuggestions.length > 0) {
-                        e.preventDefault();
-                        selectOriginPoi(originSuggestions[0]);
-                      }
-                    }}
-                    className='map-input route-field-input'
-                    style={{ ...inputStyle, margin: 0 }}
-                    placeholder='Ex.: Entrada Sul, banheiro...'
-                  />
-                  <span className='route-field-hint'>Onde voce esta agora</span>
-                  {showOriginSuggestions && (
-                    <div className='route-suggestions'>
-                      {originSuggestions.map((poi) => (
-                        <button
-                          key={`origin_suggestion_${poi.id}`}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => selectOriginPoi(poi)}
-                          className='route-suggestion-item'
-                        >
-                          <span className='route-suggestion-name'>{poi.nome}</span>
-                          <span className='route-suggestion-type'>{poi.tipo.toUpperCase()}</span>
-                        </button>
-                      ))}
-                      {originSuggestions.length === 0 && (
-                        <div className='route-suggestion-empty'>Nenhuma sugestao para local atual.</div>
-                      )}
-                    </div>
-                  )}
+              {!isMobile && (
+                <div className='route-field-card'>
+                  <label className='map-input-label route-field-label'>Origem</label>
+                  <div className='route-field-input-wrap'>
+                    <input
+                      value={displayedOriginQuery}
+                      onChange={(e) => {
+                        setOriginQuery(e.target.value);
+                        setSelectedOriginId('');
+                        setShowOriginSuggestions(true);
+                      }}
+                      onFocus={() => setShowOriginSuggestions(true)}
+                      onBlur={() => window.setTimeout(() => setShowOriginSuggestions(false), 120)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && originSuggestions.length > 0) {
+                          e.preventDefault();
+                          selectOriginPoi(originSuggestions[0]);
+                        }
+                      }}
+                      className='map-input route-field-input'
+                      disabled={hasLiveLocationFix || liveTrackingState === 'requesting'}
+                      style={{ ...inputStyle, margin: 0 }}
+                      placeholder='Ex.: Entrada Sul, banheiro...'
+                    />
+                    <span className='route-field-hint'>Onde você está agora</span>
+                    {showOriginSuggestions && !hasLiveLocationFix && liveTrackingState !== 'requesting' && (
+                      <div className='route-suggestions'>
+                        {originSuggestions.map((poi) => (
+                          <button
+                            key={`origin_suggestion_${poi.id}`}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => selectOriginPoi(poi)}
+                            className='route-suggestion-item'
+                          >
+                            <span className='route-suggestion-name'>{poi.nome}</span>
+                            <span className='route-suggestion-type'>{poi.tipo.toUpperCase()}</span>
+                          </button>
+                        ))}
+                        {originSuggestions.length === 0 && (
+                          <div className='route-suggestion-empty'>Nenhuma sugestão para local atual.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {isMobile && (
+                <div className='route-auto-origin-card'>
+                  <span className='route-auto-origin-label'>Origem sugerida</span>
+                  <strong className='route-auto-origin-name'>
+                    {autoOriginPoi?.nome || 'Será definida automaticamente pelo fluxo de entrada'}
+                  </strong>
+                  <span className='route-auto-origin-help'>
+                    Quando o QR estiver ligado, esta origem poderá ser preenchida sem intervenção manual.
+                  </span>
+                </div>
+              )}
 
               <div className='route-field-card'>
                 <label className='map-input-label route-field-label'>Destino</label>
@@ -2186,11 +4821,12 @@ const ModaCenterMap = () => {
                         selectDestinationPoi(destinationSuggestions[0]);
                       }
                     }}
+                    autoFocus={isMobile}
                     className='map-input route-field-input'
                     style={{ ...inputStyle, margin: 0 }}
                     placeholder='Ex.: Palco Principal, banheiro...'
                   />
-                  <span className='route-field-hint'>Para onde voce quer ir</span>
+                  <span className='route-field-hint'>Para onde você quer ir</span>
                   {showDestinationSuggestions && (
                     <div className='route-suggestions'>
                       {destinationSuggestions.map((poi) => (
@@ -2205,7 +4841,7 @@ const ModaCenterMap = () => {
                         </button>
                       ))}
                       {destinationSuggestions.length === 0 && (
-                        <div className='route-suggestion-empty'>Nenhuma sugestao para destino.</div>
+                        <div className='route-suggestion-empty'>Nenhuma sugestão para destino.</div>
                       )}
                     </div>
                   )}
@@ -2219,7 +4855,7 @@ const ModaCenterMap = () => {
                 style={{ ...actionButton }}
                 className='btn btn-primary route-primary-action'
               >
-                Tracar rota
+                Traçar rota
               </button>
               <button onClick={clearRoute} style={{ ...actionButton }} className='btn btn-neutral route-secondary-action'>
                 Limpar
@@ -2227,24 +4863,24 @@ const ModaCenterMap = () => {
             </div>
 
             <div className='route-feedback-card'>
-              <div className='route-feedback-title'>Resumo da navegacao</div>
+              <div className='route-feedback-title'>Resumo da navegação</div>
               <div className='route-feedback-text'>{routeMessage}</div>
             </div>
 
             {routeDistanceMeters > 0 && (
               <div className='route-metrics-card'>
                 <div className='route-metric-item'>
-                  <span className='route-metric-label'>Distancia</span>
+                  <span className='route-metric-label'>Distância</span>
                   <span className='route-metric-value'>{formatDistanceLabel(routeDistanceMeters)}</span>
                 </div>
                 <div className='route-metric-item'>
-                  <span className='route-metric-label'>Tempo medio</span>
+                  <span className='route-metric-label'>Tempo médio</span>
                   <span className='route-metric-value'>{formatWalkingTimeLabel(routeEtaMinutes)}</span>
                 </div>
                 {!isPresentationMode && (
                   <div className='route-metric-item'>
-                    <span className='route-metric-label'>Progresso</span>
-                    <span className='route-metric-value'>{Math.round(walkerProgress * 100)}%</span>
+                    <span className='route-metric-label'>{routeMetricLabel}</span>
+                    <span className='route-metric-value'>{routeMetricValue}</span>
                   </div>
                 )}
               </div>
@@ -2272,7 +4908,7 @@ const ModaCenterMap = () => {
                   Pular
                 </button>
               </div>
-              <div className='tutorial-eyebrow'>Guia rapido</div>
+              <div className='tutorial-eyebrow'>Guia rápido</div>
               <div className='tutorial-title'>{currentTutorialStep.title}</div>
               <div className='tutorial-copy'>{currentTutorialStep.text}</div>
 
@@ -2295,7 +4931,7 @@ const ModaCenterMap = () => {
                     style={{ ...actionButton }}
                     className='btn btn-primary tutorial-primary-action'
                   >
-                    Proximo
+                    Próximo
                   </button>
                 ) : (
                   <button
@@ -2311,219 +4947,6 @@ const ModaCenterMap = () => {
           </div>
         )}
 
-        {!isAdmin && activePoi && (
-          <div
-            style={{
-              position: 'absolute',
-              top: 'auto',
-              right: isMobile ? 6 : 18,
-              bottom: isMobile
-                ? 'calc(68px + env(safe-area-inset-bottom, 0px))'
-                : 72,
-              left: isMobile ? 6 : 'auto',
-              zIndex: 1100,
-              width: isMobile ? 'calc(100vw - 12px)' : 'min(400px, calc(100vw - 36px))',
-              height: `${resolvedMobileSheetHeight}px`,
-              minHeight: mobileSheetBounds ? `${mobileSheetBounds.minHeight}px` : undefined,
-              maxHeight: mobileSheetBounds ? `${mobileSheetBounds.maxHeight}px` : 'min(80dvh, 740px)',
-              overflowY: 'hidden',
-              background: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 14,
-              boxShadow: 'var(--shadow-float)',
-              padding: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              transition: !isMobileSheetDragging ? 'height 180ms ease' : undefined,
-            }}
-            className='map-floating-panel'
-          >
-            <button
-              type='button'
-              onPointerDown={handleMobileSheetPointerDown}
-              aria-label='Arrastar painel de detalhes'
-              style={{
-                width: '100%',
-                border: 'none',
-                background: 'rgba(248, 250, 252, 0.96)',
-                borderBottom: '1px solid var(--color-border)',
-                padding: '7px 0 6px',
-                cursor: 'ns-resize',
-                touchAction: 'none',
-              }}
-            >
-              <span
-                style={{
-                  display: 'block',
-                  width: 46,
-                  height: 5,
-                  borderRadius: 999,
-                  background: 'var(--color-text-soft)',
-                  margin: '0 auto',
-                }}
-              />
-              <span
-                style={{
-                  display: 'block',
-                  marginTop: 4,
-                  fontSize: 10,
-                  color: 'var(--color-text-muted)',
-                  fontWeight: 700,
-                }}
-              >
-                Arraste para cima para ampliar
-              </span>
-            </button>
-
-            <div
-              style={{
-                padding: isMobile ? '8px 8px 10px' : '10px 12px 12px',
-                overflowY: 'auto',
-                WebkitOverflowScrolling: 'touch',
-                flex: 1,
-              }}
-            >
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <span
-                  style={{
-                    minWidth: isMobile ? 28 : 30,
-                    height: isMobile ? 28 : 30,
-                    padding: '0 7px',
-                    borderRadius: 999,
-                    background: activePoiAccentColor,
-                    color: '#ffffff',
-                    border: '1px solid rgba(255,255,255,0.9)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: isMobile ? 10 : 11,
-                    fontWeight: 800,
-                    letterSpacing: '0.03em',
-                    flexShrink: 0,
-                  }}
-                >
-                  {activePoiBadgeText}
-                </span>
-                <div
-                  style={{
-                    fontSize: isMobile ? 15 : 17,
-                    fontWeight: 800,
-                    color: 'var(--color-text)',
-                    whiteSpace: 'nowrap',
-                    textOverflow: 'ellipsis',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {activePoi.nome}
-                </div>
-              </div>
-              <button
-                onClick={() => setActivePoiId(null)}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  color: 'var(--color-text-muted)',
-                  fontSize: isMobile ? 18 : 20,
-                  cursor: 'pointer',
-                  lineHeight: 1,
-                }}
-                title='Fechar detalhes'
-              >
-                x
-              </button>
-            </div>
-
-              <div style={{ fontSize: isMobile ? 12 : 13, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-              {EVENT_LABEL} - {activePoi.tipo.toUpperCase()}
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 8 }}>
-              <button
-                onClick={primaryPoiAction}
-                disabled={isActivePoiCurrentLocation}
-                style={{ ...actionButton, padding: isMobile ? '9px 8px' : '10px 9px' }}
-                className='btn btn-primary'
-              >
-                {primaryPoiActionLabel}
-              </button>
-              <button
-                onClick={secondaryPoiAction}
-                style={{ ...actionButton, padding: isMobile ? '9px 8px' : '10px 9px' }}
-                className='btn btn-neutral'
-              >
-                {secondaryPoiActionLabel}
-              </button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6, marginBottom: 8 }}>
-              {activeContactLink ? (
-                <a
-                  href={activeContactLink}
-                  target='_blank'
-                  rel='noreferrer'
-                  style={{
-                    ...actionButton,
-                    textDecoration: 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: isMobile ? '9px 8px' : '10px 9px',
-                    color: '#ffffff',
-                  }}
-                  className='btn btn-success'
-                >
-                  Abrir contato
-                </a>
-              ) : (
-                <button
-                  disabled
-                  style={{
-                    ...actionButton,
-                    cursor: 'not-allowed',
-                    padding: '10px',
-                    color: '#2a3d54',
-                  }}
-                  className='btn btn-soft'
-                >
-                  Contato indisponivel
-                </button>
-              )}
-            </div>
-{activePanelGalleryImages.length > 0 && (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: activePanelGalleryImages.length > 1 ? '1.2fr 1fr' : '1fr',
-                  gap: isMobile ? 6 : 8,
-                  marginBottom: 8,
-                }}
-              >
-                {activePanelGalleryImages.map((imgUrl, index) => (
-                  <img
-                    key={`active_gallery_${activePoi.id}_${index}`}
-                    src={imgUrl}
-                    alt={`${activePoi.nome} ${index + 1}`}
-                    loading='lazy'
-                    decoding='async'
-                    style={{
-                      width: '100%',
-                      borderRadius: 10,
-                      border: '1px solid #e2e8f0',
-                      objectFit: 'cover',
-                      height: index === 0 ? (isMobile ? 104 : 146) : isMobile ? 62 : 74,
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-
-            <div style={{ fontSize: isMobile ? 13 : 14, color: 'var(--color-text)', lineHeight: 1.4 }}>
-              {activePoi.descricao || 'Sem descrição cadastrada para este ponto.'}
-            </div>
-            </div>
-          </div>
-        )}
 
         {isPresentationMode && !isAdmin && (
           <>
@@ -2554,16 +4977,16 @@ const ModaCenterMap = () => {
                 }}
                 className='map-floating-panel'
               >
-                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text)' }}>Menu admin</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text)' }}>Menu administrativo</div>
                 <div style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.45 }}>
-                  Acesso rapido para abrir o modo de edicao do mapa.
+                  Acesso rápido para abrir o modo de edição do mapa.
                 </div>
                 <button
                   onClick={openAdminMode}
                   style={{ ...actionButton, padding: '9px 10px' }}
                   className='btn btn-primary'
                 >
-                  Abrir modo admin
+                  Abrir modo administrativo
                 </button>
                 <button
                   onClick={() => {
@@ -2572,7 +4995,7 @@ const ModaCenterMap = () => {
                   style={{ ...actionButton, padding: '9px 10px' }}
                   className='btn btn-neutral'
                 >
-                  {adminLinkCopied ? 'Link copiado' : 'Copiar link admin'}
+                  {adminLinkCopied ? 'Link copiado' : 'Copiar link administrativo'}
                 </button>
                 <div
                   style={{
@@ -2583,7 +5006,7 @@ const ModaCenterMap = () => {
                     wordBreak: 'break-all',
                   }}
                 >
-                  API ativa: {FRONT_API_BASE_URL}
+                  API em uso: {FRONT_API_BASE_URL}
                 </div>
               </div>
             )}
@@ -2601,14 +5024,14 @@ const ModaCenterMap = () => {
           </button>
         )}
 
-        <MapContainer
-          center={MAP_CENTER}
-          zoom={MAP_INTRO_ZOOM}
-          minZoom={MAP_MIN_ZOOM}
-          maxZoom={MAP_MAX_ZOOM}
+          <MapContainer
+            center={MAP_CENTER}
+            zoom={resolvedDefaultZoom}
+            minZoom={MAP_MIN_ZOOM}
+            maxZoom={MAP_MAX_ZOOM}
           maxBounds={undefined}
           maxBoundsViscosity={0}
-          style={{ height: '100%', width: '100%' }}
+          style={{ height: '100%', width: '100%', flex: 1, minWidth: 0, minHeight: 0 }}
           zoomControl={false}
           scrollWheelZoom={true}
           doubleClickZoom={true}
@@ -2619,9 +5042,9 @@ const ModaCenterMap = () => {
           zoomSnap={0.1}
           zoomDelta={0.1}
           preferCanvas={false}
-          zoomAnimation={!isMobile}
-          markerZoomAnimation={!isMobile}
-          fadeAnimation={!isMobile}
+          zoomAnimation={!prefersReducedMotion}
+          markerZoomAnimation={!prefersReducedMotion}
+          fadeAnimation={!prefersReducedMotion}
         >
           <TileLayer
             url={BASEMAP_TILE_URL}
@@ -2633,18 +5056,57 @@ const ModaCenterMap = () => {
             updateWhenZooming={false}
             updateInterval={140}
           />
-          <ImageOverlay url={mapOverlayUrl} bounds={mapBounds} opacity={mapOverlayOpacity} />
+          <ImageOverlay url={DEFAULT_MAP_BACKGROUND_URL} bounds={mapBackgroundBounds} opacity={1} zIndex={1} />
+          <ImageOverlay url={mapOverlayUrl} bounds={mapOverlayBounds} opacity={mapOverlayOpacity} zIndex={20} />
+          {!isAdmin && (
+            <Polygon
+              positions={eventBoundaryLatLngPoints}
+              pathOptions={{
+                color: BRAND_COLORS.highlight,
+                weight: 2,
+                opacity: 0.72,
+                dashArray: '10 10',
+                fillColor: BRAND_COLORS.highlight,
+                fillOpacity: 0.05,
+              }}
+              interactive={false}
+            />
+          )}
           <MapEvents />
           <MapSizeSync />
-          <MapIntroAnimation isActive={isMapIntroActive} onComplete={handleMapIntroComplete} />
-          <MapController focusPoint={focusPoint} isMobile={isMobile} />
+          <MapController
+            routeLatLngPoints={routeLatLngPoints}
+            onRouteViewportSettledChange={setIsRouteViewportSettled}
+          />
+
+          {!isAdmin && liveLocation && liveLocationMarkerPosition && liveLocation.isInsideEvent && (
+            <>
+              <Circle
+                center={liveLocationMarkerPosition}
+                radius={Math.max(4, liveLocation.accuracyMeters)}
+                pathOptions={{
+                  color: isLiveLocationAccuracyWeak ? BRAND_COLORS.highlight : BRAND_COLORS.primary,
+                  weight: 1.5,
+                  opacity: 0.38,
+                  fillColor: isLiveLocationAccuracyWeak ? BRAND_COLORS.highlight : BRAND_COLORS.primary,
+                  fillOpacity: 0.08,
+                }}
+                interactive={false}
+              />
+              <Marker position={liveLocationMarkerPosition} icon={walkerIcon} interactive={false} zIndexOffset={1900}>
+                <Tooltip permanent direction='top' offset={[0, -14]} className='route-walker-label'>
+                  Você está aqui
+                </Tooltip>
+              </Marker>
+            </>
+          )}
 
           {routeLatLngPoints.length > 1 && (
             <>
               <Polyline
-                positions={routeLatLngPoints}
+                positions={visibleRouteLatLngPoints}
                 pathOptions={{
-                  color: '#3b82f6',
+                  color: BRAND_COLORS.primarySoft,
                   weight: isMobile ? 13 : 15,
                   opacity: 0.24,
                   lineCap: 'round',
@@ -2653,9 +5115,9 @@ const ModaCenterMap = () => {
                 }}
               />
               <Polyline
-                positions={routeLatLngPoints}
+                positions={visibleRouteLatLngPoints}
                 pathOptions={{
-                  color: '#1d87ff',
+                  color: BRAND_COLORS.primary,
                   weight: isMobile ? 7 : 8,
                   opacity: 0.95,
                   lineCap: 'round',
@@ -2664,9 +5126,9 @@ const ModaCenterMap = () => {
                 }}
               />
               <Polyline
-                positions={routeLatLngPoints}
+                positions={visibleRouteLatLngPoints}
                 pathOptions={{
-                  color: '#dff1ff',
+                  color: BRAND_COLORS.highlightSoft,
                   weight: isMobile ? 3.4 : 4,
                   opacity: 0.95,
                   dashArray: '10, 16',
@@ -2675,8 +5137,21 @@ const ModaCenterMap = () => {
                   className: 'route-flow-line',
                 }}
               />
-              {walkerPosition && (
-                <Marker position={walkerPosition} icon={walkerIcon} interactive={false} zIndexOffset={1900}>
+              {isRouteViewportSettled && !isRouteRevealComplete && routeRevealHeadPoint && (
+                <CircleMarker
+                  center={routeRevealHeadPoint}
+                  radius={isMobile ? 7 : 8}
+                  interactive={false}
+                  pathOptions={{
+                    color: BRAND_COLORS.surface,
+                    weight: 3,
+                    fillColor: BRAND_COLORS.primaryStrong,
+                    fillOpacity: 1,
+                  }}
+                />
+              )}
+              {!hasLiveLocationFix && routeMarkerPosition && (
+                <Marker position={routeMarkerPosition} icon={walkerIcon} interactive={false} zIndexOffset={1900}>
                   <Tooltip permanent direction='top' offset={[0, -14]} className='route-walker-label'>
                     {routeRemainingEtaLabel === 'chegando'
                       ? 'Chegando ao destino'
@@ -2692,7 +5167,17 @@ const ModaCenterMap = () => {
             const popupImage = poi.imagemUrl || defaultPoiImages[poi.tipo];
             const popupAccentColor = getPoiAccentColor(poi);
             const popupBadgeText = getPoiBadgeText(poi);
-            const popupGallery = getPoiGalleryImages(poi).slice(0, isMobile || isPresentationMode ? 1 : 2);
+            const popupGallery = getPoiGalleryImages(poi);
+            const popupHeroImage = popupGallery[0] ?? popupImage;
+            const relatedSessions = agendaSessions
+              .filter((session) => {
+                if (session.linkedPoiId) return session.linkedPoiId === poi.id;
+                const query = normalizeForSearch(session.mapQuery || session.venue);
+                return normalizeForSearch(`${poi.nome} ${poi.descricao ?? ''} ${poi.selo ?? ''}`).includes(query);
+              })
+              .slice(0, 3);
+            const isPopupExpanded = expandedPopupPoiId === poi.id;
+            const popupDetailsId = `popup-details-${poi.id}`;
             return (
               <Marker
                 key={poi.id}
@@ -2711,126 +5196,104 @@ const ModaCenterMap = () => {
               >
                 <Popup
                   autoPan={false}
-                  minWidth={isMobile ? 220 : 244}
-                  maxWidth={isMobile ? 286 : 320}
+                  minWidth={popupSizePreset.minWidth}
+                  maxWidth={popupSizePreset.maxWidth}
                 >
                   <div
-                    style={{
-                      minWidth: isMobile ? 210 : 236,
-                      maxWidth: isMobile ? 268 : 300,
-                      maxHeight: isMobile ? 'min(48vh, 320px)' : 'min(54vh, 460px)',
-                      overflowY: 'auto',
-                      WebkitOverflowScrolling: 'touch',
-                      textAlign: 'left',
-                      borderTop: `3px solid ${popupAccentColor}`,
-                      borderRadius: 10,
-                      paddingTop: 4,
-                    }}
-                    className='store-popup-card'
+                    style={{ '--popup-accent': popupAccentColor } as CSSProperties}
+                    className={`store-popup-card ${popupZoomTier} ${isMobile ? 'popup-screen-mobile' : 'popup-screen-desktop'} ${isPopupExpanded ? 'expanded' : ''}`}
                   >
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+                    <div className='store-popup-header'>
                       <img
                         src={popupImage}
                         alt={poi.nome}
                         loading='lazy'
                         decoding='async'
-                        style={{
-                          height: isMobile ? 40 : 44,
-                          width: isMobile ? 40 : 44,
-                          borderRadius: 8,
-                          objectFit: 'cover',
-                          border: '1px solid #e2e8f0',
-                          flexShrink: 0,
-                        }}
+                        className='store-popup-thumb'
                       />
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                          <span
-                            style={{
-                              minWidth: 22,
-                              height: 22,
-                              borderRadius: 999,
-                              background: popupAccentColor,
-                              color: '#ffffff',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 10,
-                              fontWeight: 800,
-                              letterSpacing: '0.03em',
-                              padding: '0 5px',
-                              flexShrink: 0,
-                            }}
-                          >
-                            {popupBadgeText}
-                          </span>
-                        </div>
-                        <div
-                          style={{
-                            fontSize: isMobile ? 14 : 15,
-                            fontWeight: 800,
-                            color: '#0f172a',
-                            lineHeight: 1.15,
-                          }}
-                        >
-                          {poi.nome}
-                        </div>
-                        <div style={{ fontSize: isMobile ? 11 : 12, color: '#64748b', marginTop: 2 }}>
-                          {EVENT_LABEL}
+                      <div className='store-popup-heading'>
+                        <span className='store-popup-badge'>{popupBadgeText}</span>
+                        <div className='store-popup-title'>{poi.nome}</div>
+                        <div className='store-popup-subtitle'>
+                          {relatedSessions.length > 0 ? `${EVENT_LABEL} · ${relatedSessions.length} no cronograma` : EVENT_LABEL}
                         </div>
                       </div>
-                    </div>{popupGallery.length > 0 && (
-                      <div
-                        style={{
-                            display: 'grid',
-                            gridTemplateColumns: popupGallery.length > 1 ? '1.2fr 1fr' : '1fr',
-                            gap: 5,
-                            marginBottom: 6,
-                          }}
-                        >
-                        {popupGallery.map((imgUrl, index) => (
-                          <img
-                            key={`popup_gallery_${poi.id}_${index}`}
-                            src={imgUrl}
-                            alt={`${poi.nome} ${index + 1}`}
-                            loading='lazy'
-                            decoding='async'
-                            style={{
-                              width: '100%',
-                              height: popupGallery.length > 1 ? (isMobile ? 64 : 72) : isMobile ? 76 : 88,
-                              borderRadius: 7,
-                              objectFit: 'cover',
-                              border: '1px solid #e2e8f0',
-                            }}
-                          />
-                        ))}
+                    </div>
+
+                    {popupGallery.length > 0 && (
+                      <div className='store-popup-hero-shell'>
+                        <img
+                          src={popupHeroImage}
+                          alt={poi.nome}
+                          loading='lazy'
+                          decoding='async'
+                          className='store-popup-hero'
+                        />
                       </div>
                     )}
 
-                    {poi.descricao && (
-                      <div style={{ fontSize: isMobile ? 11 : 12, color: '#334155', marginBottom: 7, lineHeight: 1.35 }}>
-                        {poi.descricao}
-                      </div>
-                    )}
+                    <button
+                      type='button'
+                      onClick={() => setExpandedPopupPoiId((prev) => (prev === poi.id ? null : poi.id))}
+                      aria-expanded={isPopupExpanded}
+                      aria-controls={popupDetailsId}
+                      className={`store-popup-disclosure ${isPopupExpanded ? 'expanded' : ''}`}
+                    >
+                      <span>{isPopupExpanded ? 'Ocultar detalhes' : 'Mais detalhes e cronograma'}</span>
+                      <svg viewBox='0 0 20 20' aria-hidden='true'>
+                        <path d='M5 7.5L10 12.5L15 7.5' />
+                      </svg>
+                    </button>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <div
+                      id={popupDetailsId}
+                      className={`store-popup-expand-panel ${isPopupExpanded ? 'expanded' : ''}`}
+                    >
+                      <div className='store-popup-expand-panel-inner'>
+                        {(poi.descricao || poi.contato) && (
+                          <div className='store-popup-copy-block'>
+                            {poi.descricao && <p className='store-popup-body-copy'>{poi.descricao}</p>}
+                            <div className='store-popup-meta-row'>
+                              {poi.contato && <span className='store-popup-meta-chip'>{poi.contato}</span>}
+                              {relatedSessions.length > 0 && (
+                                <span className='store-popup-meta-chip'>{relatedSessions.length} no cronograma</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className='store-popup-agenda-block'>
+                          <div className='store-popup-section-title'>Cronograma relacionado</div>
+
+                          {relatedSessions.length > 0 ? (
+                            <div className='store-popup-agenda-list'>
+                              {relatedSessions.map((session) => (
+                                <article key={session.id} className='store-popup-agenda-item'>
+                                  <div className='store-popup-agenda-time'>
+                                    {session.weekday} {session.dateLabel} · {session.startTime} - {session.endTime}
+                                  </div>
+                                  <div className='store-popup-agenda-name'>{session.title}</div>
+                                  <div className='store-popup-agenda-venue'>{session.venue}</div>
+                                </article>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className='store-popup-empty-state'>
+                              Este espaço ainda não tem horários vinculados no cronograma.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className='store-popup-actions'>
                       <button
-                            onClick={() => {
-                              focusPoi(poi, true);
-                              markPoiAsCurrentLocation(poi);
-                            }}
-                            style={{ fontSize: isMobile ? 11 : 12, padding: isMobile ? '8px 8px' : '8px 9px' }}
-                            className='btn btn-secondary'
-                      >
-                        Definir como local atual
-                      </button>
-                      <button
+                        type='button'
                         onClick={() => {
-                          focusPoi(poi, true);
+                          focusPoi(poi, false, { moveCamera: false });
                           navigateToPoi(poi);
                         }}
-                        style={{ fontSize: isMobile ? 11 : 12, padding: isMobile ? '8px 8px' : '8px 9px' }}
-                        className='btn btn-primary'
+                        className='popup-action-btn popup-action-primary'
                       >
                         Traçar rota até aqui
                       </button>
@@ -2855,6 +5318,15 @@ const ModaCenterMap = () => {
               <Marker position={imageToLatLng(editingPoi.x, editingPoi.y)} icon={stateIcons.novo} />
             )}
         </MapContainer>
+        <div className='tap-feedback-layer' aria-hidden='true'>
+          {tapIndicators.map((indicator) => (
+            <span
+              key={indicator.id}
+              className='tap-indicator'
+              style={{ left: indicator.x, top: indicator.y }}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -2887,3 +5359,4 @@ export default ModaCenterMap;
 
 
 
+          

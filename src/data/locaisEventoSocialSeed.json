@@ -1,0 +1,112 @@
+[
+  {
+    "id": "entrada_principal",
+    "x": 1049,
+    "y": 748,
+    "nome": "Entrada Principal",
+    "tipo": "entrada",
+    "descricao": "Acesso principal do evento social.",
+    "imagemUrl": "/images/pois/indicadores/entrada.svg",
+    "corDestaque": "#16a34a",
+    "selo": "EP",
+    "nodeId": "1005_630"
+  },
+  {
+    "id": "recepcao_credenciamento",
+    "x": 861,
+    "y": 685,
+    "nome": "Recepção e Credenciamento",
+    "tipo": "servico",
+    "descricao": "Retirada de pulseiras e apoio inicial.",
+    "imagemUrl": "/images/pois/indicadores/apoio.svg",
+    "contato": "(81) 99999-1010",
+    "corDestaque": "#2563eb",
+    "selo": "RC",
+    "nodeId": "825_570"
+  },
+  {
+    "id": "palco_principal",
+    "x": 1375,
+    "y": 331,
+    "nome": "Palco Principal",
+    "tipo": "atividade",
+    "descricao": "Programação principal do evento.",
+    "imagemUrl": "/images/pois/indicadores/evento.svg",
+    "corDestaque": "#ea580c",
+    "selo": "PAL",
+    "nodeId": "1305_285"
+  },
+  {
+    "id": "lounge_convivio",
+    "x": 350,
+    "y": 704,
+    "nome": "Lounge de Convívio",
+    "tipo": "atividade",
+    "descricao": "Espaço para descanso e networking.",
+    "imagemUrl": "/images/pois/indicadores/evento.svg",
+    "corDestaque": "#b45309",
+    "selo": "LNG",
+    "nodeId": "330_585"
+  },
+  {
+    "id": "espaco_fotos",
+    "x": 1440,
+    "y": 711,
+    "nome": "Espaço de Fotos",
+    "tipo": "atividade",
+    "descricao": "Área cenográfica para fotos.",
+    "imagemUrl": "/images/pois/indicadores/evento.svg",
+    "corDestaque": "#db2777",
+    "selo": "FTO",
+    "nodeId": "1380_600"
+  },
+  {
+    "id": "area_alimentacao",
+    "x": 835,
+    "y": 284,
+    "nome": "Área de Alimentação",
+    "tipo": "servico",
+    "descricao": "Ponto de alimentação e bebidas.",
+    "imagemUrl": "/images/pois/indicadores/apoio.svg",
+    "corDestaque": "#0d9488",
+    "selo": "ALI",
+    "nodeId": "795_270"
+  },
+  {
+    "id": "posto_apoio",
+    "x": 426,
+    "y": 315,
+    "nome": "Posto de Apoio",
+    "tipo": "servico",
+    "descricao": "Informações e apoio ao participante.",
+    "imagemUrl": "/images/pois/indicadores/apoio.svg",
+    "contato": "(81) 99999-2020",
+    "corDestaque": "#4338ca",
+    "selo": "SOS",
+    "nodeId": "405_255"
+  },
+  {
+    "id": "banheiro_social",
+    "x": 1163,
+    "y": 149,
+    "nome": "Banheiro Social",
+    "tipo": "banheiro",
+    "descricao": "Banheiro de apoio ao público.",
+    "imagemUrl": "/images/pois/indicadores/banheiro.svg",
+    "corDestaque": "#0284c7",
+    "selo": "WC",
+    "nodeId": "1110_120"
+  },
+  {
+    "id": "saida_lateral",
+    "x": 658,
+    "y": 83,
+    "nome": "Saída Lateral",
+    "tipo": "entrada",
+    "descricao": "Saída secundária para fluxo de evacuação.",
+    "imagemUrl": "/images/pois/indicadores/entrada.svg",
+    "corDestaque": "#15803d",
+    "selo": "S2",
+    "nodeId": "630_75"
+  }
+]
