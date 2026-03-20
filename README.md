@@ -1,73 +1,56 @@
-# React + TypeScript + Vite
+# gnostart frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Frontend web do mapa operacional do evento, com foco em:
 
-Currently, two official plugins are available:
+- mapa interno com overlay oficial
+- GPS em tempo real
+- rota ate os pontos do evento
+- cronograma vinculado aos pins
+- painel de operacao para POIs
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Estrutura principal
 
-## React Compiler
+- `src/components/Maps/Gnomon.tsx`: orquestracao do mapa, estado principal e integracao geral
+- `src/components/Maps/buttons/`: botoes fixos de `Cronograma`, `Locais` e `Parceiros`
+- `src/components/Maps/header/`: header e logo do Gnomon
+- `src/components/Maps/location/`: cartao e estado visual de localizacao
+- `src/components/Maps/routes-pins-previews/`: rota, painel de pins, previews e estagios visuais ligados ao mapa
+- `src/components/Maps/tutorial/`: overlay e fluxo do tutorial
+- `src/config/mapConfig.ts`: calibracao do evento, limites do overlay e configuracao de zoom
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Ambiente
 
-## Expanding the ESLint configuration
+Crie `.env` a partir de `.env.example`.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```env
+VITE_API_BASE_URL=
+VITE_MAP_ID=default_map
+VITE_ADMIN_API_KEY=
+VITE_REQUIRE_ACCESS_GATE=true
+VITE_REQUIRE_TEMP_LOGIN=true
+VITE_ACCESS_GATE_USERNAME=admin
+VITE_ACCESS_GATE_PASSWORD=654321
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Notas:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- Em desenvolvimento local, deixe `VITE_API_BASE_URL` vazio e use o proxy do Vite.
+- Em VPS same-origin, deixe `VITE_API_BASE_URL` vazio e faça proxy de `/api` e `/health`.
+- Em frontend e backend separados, configure `VITE_API_BASE_URL=https://api.seu-dominio.com`.
+- Se quiser manter a tela de acesso interno, configure `VITE_ACCESS_GATE_USERNAME` e `VITE_ACCESS_GATE_PASSWORD`.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Comandos
+
+```bash
+npm install
+npm run dev
+npm run build
 ```
+
+## Entrega
+
+Antes de publicar:
+
+- confira `GO_LIVE_CHECKLIST.md`
+- valide o GPS em aparelho real no local do evento
+- confirme que `src/config/mapConfig.ts` reflete o perimetro final

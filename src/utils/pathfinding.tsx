@@ -122,6 +122,20 @@ export const findPath = (startId: string, endId: string) => {
   return null;
 };
 
+export const buildDirectPath = (
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number[][] => {
+  const startPoint: number[] = [Math.round(start.y), Math.round(start.x)];
+  const endPoint: number[] = [Math.round(end.y), Math.round(end.x)];
+
+  if (startPoint[0] === endPoint[0] && startPoint[1] === endPoint[1]) {
+    return [startPoint];
+  }
+
+  return [startPoint, endPoint];
+};
+
 const reconstructPath = (cameFrom: Record<string, string>, current: string) => {
   const path: number[][] = [];
   let temp = current;

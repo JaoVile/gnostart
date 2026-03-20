@@ -1,3 +1,11 @@
+import {
+  buildApiUrl,
+  clearBackendTemporarilyUnavailable,
+  getBackendTemporarilyUnavailableMessage,
+  isBackendTemporarilyUnavailable,
+  markBackendTemporarilyUnavailable,
+} from './apiBase';
+
 type PoiType = 'atividade' | 'servico' | 'banheiro' | 'entrada';
 
 export interface MapPoiDto {
@@ -14,14 +22,20 @@ export interface MapPoiDto {
   nodeId?: string;
 }
 
+export type AgendaPoiLinksDto = Record<string, string>;
+
 interface MapBootstrapResponse {
   map: {
     id: string;
     nome: string;
     eventName: string;
-    overlayUrl: string;
   };
   pois: MapPoiDto[];
+  agendaPoiLinks?: AgendaPoiLinksDto;
+}
+
+interface AgendaPoiLinksResponse {
+  links: AgendaPoiLinksDto;
 }
 
 export interface UpsertPoiPayload {
@@ -38,9 +52,10 @@ export interface UpsertPoiPayload {
   nodeId?: string;
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3333').replace(/\/+$/, '');
 const MAP_ID = import.meta.env.VITE_MAP_ID || 'default_map';
 const ADMIN_API_KEY = import.meta.env.VITE_ADMIN_API_KEY || '';
+const BOOTSTRAP_REQUEST_DEDUPE_MS = 600;
+let bootstrapRequestPromise: Promise<MapBootstrapResponse> | null = null;
 
 const buildHeaders = (contentType?: string): Headers => {
   const headers = new Headers();
@@ -50,35 +65,71 @@ const buildHeaders = (contentType?: string): Headers => {
 };
 
 const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
-  const response = await fetch(url, init);
+  if (isBackendTemporarilyUnavailable()) {
+    throw new Error(getBackendTemporarilyUnavailableMessage());
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch {
+    const message = 'Nao foi possivel alcancar o backend do mapa agora. O app vai seguir com a base local.';
+    markBackendTemporarilyUnavailable(message);
+    throw new Error(message);
+  }
+
   if (!response.ok) {
     const responseText = await response.text();
-    throw new Error(responseText || `Erro ${response.status} ao acessar ${url}`);
+    const message = responseText || `Erro ${response.status} ao acessar ${url}`;
+    if (response.status >= 500) {
+      markBackendTemporarilyUnavailable(
+        'O backend do mapa respondeu com falha temporaria. O app vai seguir com a base local por alguns segundos.',
+      );
+    }
+    throw new Error(message);
   }
+
+  clearBackendTemporarilyUnavailable();
   return (await response.json()) as T;
 };
 
-export const fetchMapBootstrap = () =>
-  requestJson<MapBootstrapResponse>(
-    `${API_BASE_URL}/api/v1/map/bootstrap?mapId=${encodeURIComponent(MAP_ID)}&includeGraph=false`,
-  );
+export const fetchMapBootstrap = () => {
+  if (!bootstrapRequestPromise) {
+    bootstrapRequestPromise = requestJson<MapBootstrapResponse>(
+      buildApiUrl(`/api/v1/map/bootstrap?mapId=${encodeURIComponent(MAP_ID)}&includeGraph=false`),
+    ).finally(() => {
+      globalThis.setTimeout(() => {
+        bootstrapRequestPromise = null;
+      }, BOOTSTRAP_REQUEST_DEDUPE_MS);
+    });
+  }
+
+  return bootstrapRequestPromise;
+};
+
+export const saveAgendaPoiLinks = (links: AgendaPoiLinksDto) =>
+  requestJson<AgendaPoiLinksResponse>(buildApiUrl('/api/v1/map/agenda-links'), {
+    method: 'PUT',
+    headers: buildHeaders('application/json'),
+    body: JSON.stringify({ links }),
+  });
 
 export const createPoi = (payload: UpsertPoiPayload) =>
-  requestJson<MapPoiDto>(`${API_BASE_URL}/api/v1/pois`, {
+  requestJson<MapPoiDto>(buildApiUrl('/api/v1/pois'), {
     method: 'POST',
     headers: buildHeaders('application/json'),
     body: JSON.stringify(payload),
   });
 
 export const updatePoi = (id: string, payload: Omit<UpsertPoiPayload, 'id'>) =>
-  requestJson<MapPoiDto>(`${API_BASE_URL}/api/v1/pois/${encodeURIComponent(id)}`, {
+  requestJson<MapPoiDto>(buildApiUrl(`/api/v1/pois/${encodeURIComponent(id)}`), {
     method: 'PATCH',
     headers: buildHeaders('application/json'),
     body: JSON.stringify(payload),
   });
 
 export const deletePoi = async (id: string) => {
-  const response = await fetch(`${API_BASE_URL}/api/v1/pois/${encodeURIComponent(id)}`, {
+  const response = await fetch(buildApiUrl(`/api/v1/pois/${encodeURIComponent(id)}`), {
     method: 'DELETE',
     headers: buildHeaders(),
   });
@@ -89,7 +140,7 @@ export const deletePoi = async (id: string) => {
 };
 
 export const trackPoiAccess = async (id: string, source = 'front-map') => {
-  await fetch(`${API_BASE_URL}/api/v1/pois/${encodeURIComponent(id)}/access`, {
+  await fetch(buildApiUrl(`/api/v1/pois/${encodeURIComponent(id)}/access`), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

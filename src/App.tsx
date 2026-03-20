@@ -1,37 +1,34 @@
-import { Suspense, lazy, useEffect, useState, type FormEvent } from 'react';
+import { Suspense, lazy, useState, type FormEvent } from 'react';
 import './App.css';
+import {
+  ACCESS_GATE_PASSWORD,
+  ACCESS_GATE_STORAGE_KEY,
+  ACCESS_GATE_USERNAME,
+  REQUIRE_ACCESS_GATE,
+} from './config/accessGate';
 
 const ModaCenterMap = lazy(() => import('./components/Maps/Gnomon'));
-const TEMP_LOGIN_STORAGE_KEY = 'gnostart.tempLoginEnabled';
-const TEMP_LOGIN_USERNAME = 'admin';
-const TEMP_LOGIN_PASSWORD = '654321';
-const REQUIRE_TEMP_LOGIN = (import.meta.env.VITE_REQUIRE_TEMP_LOGIN || 'true').trim().toLowerCase() !== 'false';
 
-const readTempLoginState = () => {
+const readAccessGateState = () => {
   if (typeof window === 'undefined') return false;
-  return window.sessionStorage.getItem(TEMP_LOGIN_STORAGE_KEY) === '1';
+  return window.sessionStorage.getItem(ACCESS_GATE_STORAGE_KEY) === '1';
 };
 
 function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [isAuthenticated, setIsAuthenticated] = useState(() => !REQUIRE_TEMP_LOGIN || readTempLoginState());
-
-  useEffect(() => {
-    const mapPreload = new Image();
-    mapPreload.src = '/maps/mapa-background.jpeg';
-  }, []);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !REQUIRE_ACCESS_GATE || readAccessGateState());
 
   const handleLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const normalizedUsername = username.trim();
-    if (normalizedUsername === TEMP_LOGIN_USERNAME && password === TEMP_LOGIN_PASSWORD) {
+    if (normalizedUsername === ACCESS_GATE_USERNAME && password === ACCESS_GATE_PASSWORD) {
       setIsAuthenticated(true);
       setLoginError('');
       if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem(TEMP_LOGIN_STORAGE_KEY, '1');
+        window.sessionStorage.setItem(ACCESS_GATE_STORAGE_KEY, '1');
       }
       return;
     }
@@ -44,10 +41,8 @@ function App() {
       <div className="App auth-shell">
         <div className="auth-card">
           <div className="auth-eyebrow">Acesso interno</div>
-          <h1 className="auth-title">Acesso interno ao mapa operacional</h1>
-          <p className="auth-copy">
-            Este login é temporário e deve ser removido antes do uso oficial.
-          </p>
+          <h1 className="auth-title">Mapa operacional com acesso restrito</h1>
+          <p className="auth-copy">Ambiente reservado para pessoas autorizadas durante a operação do evento.</p>
 
           <form className="auth-form" onSubmit={handleLogin}>
             <label className="auth-field">
@@ -94,4 +89,3 @@ function App() {
 }
 
 export default App;
-
