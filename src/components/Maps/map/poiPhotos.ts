@@ -27,6 +27,7 @@ const buildPhotoLabel = (fileName: string) => fileName.replace(/\.[^.]+$/, '');
 const buildStoredPoiPhotoReference = (fileName: string) => `fotopins/${fileName}`;
 const extractPhotoFileName = (value: string) => value.split(/[\\/]/).pop() ?? value;
 const normalizePhotoFileName = (value: string) => extractPhotoFileName(value).trim().toLowerCase();
+const normalizePhotoStem = (value: string) => normalizePhotoKey(extractPhotoFileName(value));
 const isGenericPoiIndicator = (value?: string | null) =>
   value?.trim().toLowerCase().includes('/images/pois/indicadores/') ?? false;
 
@@ -114,6 +115,7 @@ export const findPoiPhotoOption = (value?: string | null) => {
     photoOptionByStoredReference[trimmedValue.toLowerCase()] ??
     photoOptionByFileName[normalizePhotoFileName(trimmedValue)] ??
     photoOptionByFileName[normalizePhotoFileName(extractPhotoFileName(trimmedValue))] ??
+    photoOptionByKey[normalizePhotoStem(trimmedValue)] ??
     poiPhotoLibrary.find((photo) => photo.id === normalizePhotoKey(trimmedValue)) ??
     null
   );
