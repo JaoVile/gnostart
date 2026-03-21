@@ -9,6 +9,7 @@ COPY tsconfig*.json ./
 COPY vite.config.ts ./
 COPY index.html ./
 COPY public ./public
+COPY scripts ./scripts
 COPY src ./src
 
 ARG VITE_API_BASE_URL=
