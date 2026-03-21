@@ -57,7 +57,7 @@ import {
   normalizeHexColor,
   stateIcons,
 } from './map/poiVisuals';
-import { getAutoAssignedPoiPhotoReference, getPoiPhotoImage, resolvePoiPhotoUrl } from './map/poiPhotos';
+import { getAutoAssignedPoiPhotoReference, getPoiPhotoImage, resolvePoiPhotoUrl, resolvePoiPrimaryPhotoUrl } from './map/poiPhotos';
 import { useMapBootstrap } from './map/useMapBootstrap';
 import { PartnersPanel } from './allbuttons/partnership/PartnersPanel';
 import { ManualOriginFallbackOverlay } from './allbuttons/routes/ManualOriginFallbackOverlay';
@@ -1309,7 +1309,9 @@ const ModaCenterMap = () => {
           durationLabel: formatAgendaDuration(session.startTime, session.endTime),
           isFavorite: favoriteAgendaIds.includes(session.id),
           hasLinkedPoi: Boolean(matchedPoi),
-          linkedPoiImage: matchedPoi ? resolvePoiPhotoUrl(matchedPoi.imagemUrl) || defaultPoiImages[matchedPoi.tipo] : null,
+          linkedPoiImage: matchedPoi
+            ? resolvePoiPrimaryPhotoUrl(matchedPoi.id, matchedPoi.nome, matchedPoi.imagemUrl) || defaultPoiImages[matchedPoi.tipo]
+            : null,
           linkedPoiName: matchedPoi?.nome ?? null,
           speakers: session.speakers,
         };

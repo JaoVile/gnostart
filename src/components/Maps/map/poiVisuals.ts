@@ -2,6 +2,7 @@ import L from 'leaflet';
 import pinMapaSvg from '../../../assets/pin_mapa.svg?raw';
 import type { PoiPinScaleTier, PoiPinSizeByTier } from '../../../config/mapConfig';
 import type { PointData, PoiType } from '../types';
+import { resolvePoiPrimaryPhotoUrl } from './poiPhotos';
 
 export const BRAND_COLORS = {
   ink: '#5c33ad',
@@ -203,6 +204,13 @@ const colorizePinMapaSvg = (svgMarkup: string, accent: string) =>
   );
 
 const sanitizeSvgScopeId = (value: string) => value.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+const escapeHtmlAttribute = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 
 const buildPoiMarkerFallbackArtwork = (poi: PointData, clipId: string, accent: string) => {
   const { x, y, size } = PIN_MAPA_PHOTO_FRAME;
@@ -221,7 +229,16 @@ const buildPoiMarkerFallbackArtwork = (poi: PointData, clipId: string, accent: s
   )}"/><circle cx="${cx}" cy="${cy}" r="84" fill="${outerFill}"/><circle cx="${cx}" cy="${cy}" r="68" fill="${innerFill}" stroke="${ringStroke}" stroke-width="6"/><g transform="translate(${cx - 33}, ${cy - 33})">${glyphMarkup}</g></g>`;
 };
 
-const createPoiMarkerSvg = (poi: PointData, accent: string, scopeId: string) => {
+const buildPoiMarkerPhotoArtwork = (photoUrl: string, clipId: string, accent: string) => {
+  const { x, y, size } = PIN_MAPA_PHOTO_FRAME;
+  const safePhotoUrl = escapeHtmlAttribute(photoUrl);
+  const baseFill = mixColors(accent, '#ffffff', 0.84);
+  const overlayFill = mixColors(accent, '#ffffff', 0.18);
+
+  return `<g clip-path="url(#${clipId})"><rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${baseFill}"/><image href="${safePhotoUrl}" x="${x}" y="${y}" width="${size}" height="${size}" preserveAspectRatio="xMidYMid slice"/><rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${overlayFill}" opacity="0.14"/></g>`;
+};
+
+const createPoiMarkerSvg = (poi: PointData, accent: string, scopeId: string, photoUrl: string | null) => {
   let svgMarkup = scopeSvgIds(pinMapaSvg, scopeId);
   svgMarkup = colorizePinMapaSvg(svgMarkup, accent);
 
@@ -230,7 +247,10 @@ const createPoiMarkerSvg = (poi: PointData, accent: string, scopeId: string) => 
     `<g clip-path="url\\(#${escapeRegExp(clipId)}\\)">[\\s\\S]*?<\\/g>`,
     'i',
   );
-  svgMarkup = svgMarkup.replace(clipGroupPattern, buildPoiMarkerFallbackArtwork(poi, clipId, accent));
+  svgMarkup = svgMarkup.replace(
+    clipGroupPattern,
+    photoUrl ? buildPoiMarkerPhotoArtwork(photoUrl, clipId, accent) : buildPoiMarkerFallbackArtwork(poi, clipId, accent),
+  );
 
   return svgMarkup.replace('<svg ', '<svg class="poi-marker-svg" ');
 };
@@ -246,11 +266,12 @@ const createIcon = (label: string, color: string, size = 30, isHighlighted = fal
 const createPoiIcon = (
   poi: PointData,
   accent: string,
+  photoUrl: string | null,
   size = 34,
   isHighlighted = false,
 ) => {
   const scopeId = `poi-marker-${sanitizeSvgScopeId(poi.id)}-${isHighlighted ? 'active' : 'idle'}`;
-  const svgMarkup = createPoiMarkerSvg(poi, accent, scopeId);
+  const svgMarkup = createPoiMarkerSvg(poi, accent, scopeId, photoUrl);
   const height = Math.round(size * PIN_MAPA_ASPECT_RATIO);
   return new L.DivIcon({
     html: `<div class='poi-marker-shell poi-marker-shell--svg${isHighlighted ? ' is-highlighted' : ''}' style='--poi-width:${size}px; --poi-height:${height}px;'><span class='poi-marker-art'>${svgMarkup}</span></div>`,
@@ -269,11 +290,12 @@ export const getPoiIcon = (
 ) => {
   const palette = getPoiPalette(poi);
   const size = pinSizes[sizeTier];
-  const cacheKey = `${poi.id}|${palette.accent}|${sizeTier}|${size}|${isHighlighted ? 1 : 0}`;
+  const photoUrl = resolvePoiPrimaryPhotoUrl(poi.id, poi.nome, poi.imagemUrl);
+  const cacheKey = `${poi.id}|${palette.accent}|${photoUrl ?? 'sem-foto'}|${sizeTier}|${size}|${isHighlighted ? 1 : 0}`;
   const cached = poiIconCache.get(cacheKey);
   if (cached) return cached;
 
-  const icon = createPoiIcon(poi, palette.accent, size, isHighlighted);
+  const icon = createPoiIcon(poi, palette.accent, photoUrl, size, isHighlighted);
   poiIconCache.set(cacheKey, icon);
   return icon;
 };

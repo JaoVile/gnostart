@@ -28,6 +28,7 @@ const buildStoredPoiPhotoReference = (fileName: string) => `fotopins/${fileName}
 const extractPhotoFileName = (value: string) => value.split(/[\\/]/).pop() ?? value;
 const normalizePhotoFileName = (value: string) => extractPhotoFileName(value).trim().toLowerCase();
 const normalizePhotoStem = (value: string) => normalizePhotoKey(extractPhotoFileName(value));
+const isStoredPoiPhotoReference = (value: string) => /(^|[\\/])fotopins[\\/]/i.test(value.trim());
 const isGenericPoiIndicator = (value?: string | null) =>
   value?.trim().toLowerCase().includes('/images/pois/indicadores/') ?? false;
 
@@ -126,7 +127,12 @@ export const findPoiPhotoOptionByUrl = (url?: string | null) => findPoiPhotoOpti
 export const resolvePoiPhotoUrl = (value?: string | null) => {
   const trimmedValue = value?.trim();
   if (!trimmedValue) return null;
-  return findPoiPhotoOption(trimmedValue)?.url ?? trimmedValue;
+  const matchedOption = findPoiPhotoOption(trimmedValue);
+  if (matchedOption) {
+    return matchedOption.url;
+  }
+
+  return isStoredPoiPhotoReference(trimmedValue) ? null : trimmedValue;
 };
 
 export const getAutoAssignedPoiPhotoReference = (poiId?: string | null, poiName?: string | null, currentValue?: string | null) => {
@@ -150,3 +156,16 @@ export const getAutoAssignedPoiPhotoReference = (poiId?: string | null, poiName?
 
 export const getPoiPhotoImage = (poiId: string, poiName?: string | null) =>
   findPoiPhotoOptionForPoi(poiId, poiName)?.url ?? photoUrlByKey[normalizePhotoKey(poiId)] ?? null;
+
+export const resolvePoiPrimaryPhotoUrl = (poiId?: string | null, poiName?: string | null, currentValue?: string | null) => {
+  const directUrl = resolvePoiPhotoUrl(currentValue);
+  if (directUrl) {
+    return directUrl;
+  }
+
+  if (poiId?.trim()) {
+    return getPoiPhotoImage(poiId, poiName);
+  }
+
+  return findPoiPhotoOptionForPoi(poiId, poiName)?.url ?? null;
+};

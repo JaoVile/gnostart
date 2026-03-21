@@ -3,7 +3,7 @@ import type { JSX } from 'react';
 import { CircleMarker, Marker, Polyline, Tooltip } from 'react-leaflet';
 import { PoiPopupCard, type PoiPopupAgendaSession } from '../routes-pins-previews/PoiPopupCard';
 import type { PointData, PoiType } from '../types';
-import { resolvePoiPhotoUrl } from './poiPhotos';
+import { resolvePoiPrimaryPhotoUrl } from './poiPhotos';
 
 export const MapRouteLayer = ({
   routeLatLngPoints,
@@ -204,7 +204,7 @@ export const MapPoiLayer = ({
       const isActive = poi.id === activePoiId;
       const isOriginSelected = poi.id === selectedOriginId;
       const isDestinationSelected = poi.id === selectedDestinationId;
-      const popupImage = resolvePoiPhotoUrl(poi.imagemUrl) || defaultPoiImages[poi.tipo];
+      const popupImage = resolvePoiPrimaryPhotoUrl(poi.id, poi.nome, poi.imagemUrl) || defaultPoiImages[poi.tipo];
       const popupAccentColor = getPoiAccentColor(poi);
       const popupGallery = getPoiGalleryImages(poi);
       const popupHeroImage = popupGallery[0] ?? popupImage;
