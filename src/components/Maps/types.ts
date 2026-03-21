@@ -46,11 +46,27 @@ export interface PointData {
 
 export type EditingPoi = Partial<PointData>;
 
+export type MapBuildRegistration = {
+  mapPixelWidth: number;
+  mapPixelHeight: number;
+  overlayWest: number;
+  overlayEast: number;
+  overlaySouth: number;
+  overlayNorth: number;
+  primarySurfaceUrl: string;
+  logicalMaskSource: string;
+  logicalMaskMode: string;
+  logicalWhiteThreshold: number;
+  freeWalkNavigationEnabled: boolean;
+  poiLayoutSignature: string;
+};
+
 export type AdminWorkspaceSnapshot = {
   version: number;
   pois: PointData[];
   draftPoiIds: string[];
   updatedAt: string;
+  build?: MapBuildRegistration;
 };
 
 export type AdminAgendaPoiLinkSnapshot = {
@@ -62,12 +78,23 @@ export type AdminAgendaPoiLinkSnapshot = {
 export type PoiRuntimeBackupSnapshot = {
   version: number;
   pois: PointData[];
+  build?: MapBuildRegistration;
+};
+
+export type PoiAdminExportSnapshot = {
+  version: number;
+  eventName: string;
+  updatedAt: string;
+  draftPoiIds: string[];
+  pois: PointData[];
+  build?: MapBuildRegistration;
 };
 
 export type InitialPoiRuntimeState = {
   pois: PointData[];
   source: PoiDataSource;
   draftPoiIds: string[];
+  buildWarning?: string | null;
 };
 
 export type TapIndicator = {
@@ -88,23 +115,6 @@ export type ManualRouteOrigin = {
   y: number;
   lat: number;
   lng: number;
-  snappedNodeId: string | null;
-  nearestPoiId: string | null;
-};
-
-export type LiveTrackingState = 'idle' | 'requesting' | 'active' | 'blocked' | 'unsupported' | 'error';
-export type LiveLocationSource = 'gps';
-export type LiveLocationContextState = 'idle' | 'loading' | 'ready' | 'error';
-
-export type LiveLocationState = {
-  lat: number;
-  lng: number;
-  x: number;
-  y: number;
-  accuracyMeters: number;
-  capturedAt: number;
-  isInsideEvent: boolean;
-  usedBoundaryGrace: boolean;
   snappedNodeId: string | null;
   nearestPoiId: string | null;
 };

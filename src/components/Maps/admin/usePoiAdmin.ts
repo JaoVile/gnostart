@@ -1,11 +1,15 @@
 import { useCallback, type ChangeEvent, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { createPoi, deletePoi, saveAgendaPoiLinks, updatePoi, type MapPoiDto, type UpsertPoiPayload } from '../../../services/mapApi';
+import { CURRENT_MAP_BUILD_REGISTRATION, describeMapBuildRegistrationDifference } from './buildRegistration';
 import { agendaSessions } from '../data/agenda';
 import { defaultPoiImages, normalizeBadgeText, normalizeHexColor } from '../map/poiVisuals';
+import { findPoiPhotoOption, getAutoAssignedPoiPhotoReference } from '../map/poiPhotos';
 import type {
   AgendaSessionPoiLinkOverrides,
   EditingPoi,
+  MapBuildRegistration,
   PointData,
+  PoiAdminExportSnapshot,
   PoiAccessCount,
   PoiDataSource,
 } from '../types';
@@ -40,7 +44,13 @@ type UsePoiAdminOptions = {
   mapHeight: number;
   freeWalkNavigationEnabled: boolean;
   findNearestNodeFn: (x: number, y: number, maxDistance: number) => string | null;
-  parseStoredPoiList: (value: unknown) => PointData[];
+  parseStoredPoiImport: (
+    value: unknown,
+  ) => {
+    pois: PointData[];
+    draftPoiIds: string[];
+    build: MapBuildRegistration | null;
+  };
   loadPoiRuntimeBackup: () => PointData[];
   getFrontSeedPois: () => PointData[];
   clearAdminWorkspaceSnapshot: () => void;
@@ -52,6 +62,9 @@ type UsePoiAdminOptions = {
       includeId?: boolean;
     },
   ) => UpsertPoiPayload;
+  eventName: string;
+  exportFileName: string;
+  currentMapBuildLabel: string;
 };
 
 export const usePoiAdmin = ({
@@ -83,22 +96,38 @@ export const usePoiAdmin = ({
   mapHeight,
   freeWalkNavigationEnabled,
   findNearestNodeFn,
-  parseStoredPoiList,
+  parseStoredPoiImport,
   loadPoiRuntimeBackup,
   getFrontSeedPois,
   clearAdminWorkspaceSnapshot,
   sanitizeAgendaPoiLinkRecord,
   fromApiPoi,
   toPoiApiPayload,
+  eventName,
+  exportFileName,
+  currentMapBuildLabel,
 }: UsePoiAdminOptions) => {
-  const updatePoiPosition = useCallback(
-    (poiId: string, lat: number, lng: number) => {
-      if (!isAdmin) return;
+  const clampMapCoordinate = useCallback(
+    (value: number, axis: 'x' | 'y') => {
+      const maxValue = axis === 'x' ? mapWidth : mapHeight;
+      return Math.max(0, Math.min(maxValue, Math.round(value)));
+    },
+    [mapHeight, mapWidth],
+  );
 
-      const mapped = latLngToImageOverlay(lat, lng);
-      const nextX = Math.round(mapped.x);
-      const nextY = Math.round(mapped.y);
-      const nearestNode = freeWalkNavigationEnabled ? null : findNearestNodeFn(nextX, nextY, 90);
+  const resolveNodeId = useCallback(
+    (x: number, y: number) => (freeWalkNavigationEnabled ? undefined : findNearestNodeFn(x, y, 90) ?? undefined),
+    [findNearestNodeFn, freeWalkNavigationEnabled],
+  );
+
+  const normalizePoiForExport = useCallback((poi: PointData): PointData => {
+    const imagemUrl = getAutoAssignedPoiPhotoReference(poi.id, poi.nome, poi.imagemUrl);
+    return imagemUrl && imagemUrl !== poi.imagemUrl ? { ...poi, imagemUrl } : poi;
+  }, []);
+
+  const applyExistingPoiPosition = useCallback(
+    (poiId: string, nextX: number, nextY: number) => {
+      const nearestNode = resolveNodeId(nextX, nextY);
 
       setPois((prev) =>
         prev.map((poi) =>
@@ -107,26 +136,14 @@ export const usePoiAdmin = ({
                 ...poi,
                 x: nextX,
                 y: nextY,
-                nodeId: nearestNode ?? undefined,
+                nodeId: nearestNode,
               }
             : poi,
         ),
       );
 
-      setEditingPoi((prev) =>
-        prev?.id === poiId
-          ? {
-              ...prev,
-              x: nextX,
-              y: nextY,
-              nodeId: nearestNode ?? undefined,
-            }
-          : prev,
-      );
-
       setDraftPoiIds((prev) => (prev.includes(poiId) ? prev : [...prev, poiId]));
       setPoiDataSource('local-workspace');
-      setAdminStatusMessage('Posicao atualizada na edicao local. Publique quando quiser enviar ao servidor.');
 
       if (activePoiId === poiId) {
         setFocusPoint((prev) =>
@@ -135,25 +152,176 @@ export const usePoiAdmin = ({
                 ...prev,
                 x: nextX,
                 y: nextY,
-                nodeId: nearestNode ?? undefined,
+                nodeId: nearestNode,
               }
             : prev,
         );
       }
+
+      return nearestNode;
+    },
+    [activePoiId, resolveNodeId, setDraftPoiIds, setFocusPoint, setPoiDataSource, setPois],
+  );
+
+  const updatePoiPosition = useCallback(
+    (poiId: string, lat: number, lng: number) => {
+      if (!isAdmin) return;
+
+      const mapped = latLngToImageOverlay(lat, lng);
+      const nextX = clampMapCoordinate(mapped.x, 'x');
+      const nextY = clampMapCoordinate(mapped.y, 'y');
+      const nearestNode = applyExistingPoiPosition(poiId, nextX, nextY);
+
+      setEditingPoi((prev) =>
+        prev?.id === poiId
+          ? {
+              ...prev,
+              x: nextX,
+              y: nextY,
+              nodeId: nearestNode,
+            }
+          : prev,
+      );
+      setAdminStatusMessage('Posicao atualizada na edicao local. Publique quando quiser enviar ao servidor.');
     },
     [
-      activePoiId,
-      findNearestNodeFn,
-      freeWalkNavigationEnabled,
+      applyExistingPoiPosition,
+      clampMapCoordinate,
       isAdmin,
       latLngToImageOverlay,
       setAdminStatusMessage,
-      setDraftPoiIds,
       setEditingPoi,
-      setFocusPoint,
-      setPoiDataSource,
-      setPois,
     ],
+  );
+
+  const updateEditingPoiCoordinates = useCallback(
+    (x: number, y: number) => {
+      if (!editingPoi) return;
+
+      const nextX = clampMapCoordinate(x, 'x');
+      const nextY = clampMapCoordinate(y, 'y');
+
+      if (editingPoi.id) {
+        const nearestNode = applyExistingPoiPosition(editingPoi.id, nextX, nextY);
+        setEditingPoi((current) =>
+          current
+            ? {
+                ...current,
+                x: nextX,
+                y: nextY,
+                nodeId: nearestNode,
+              }
+            : current,
+        );
+        setAdminStatusMessage('Posicao ajustada com coordenadas na edicao local.');
+        return;
+      }
+
+      setEditingPoi((current) =>
+        current
+          ? {
+              ...current,
+              x: nextX,
+              y: nextY,
+              nodeId: resolveNodeId(nextX, nextY),
+            }
+          : current,
+      );
+      setAdminStatusMessage('Posicao do novo ponto ajustada no rascunho atual.');
+    },
+    [applyExistingPoiPosition, clampMapCoordinate, editingPoi, resolveNodeId, setAdminStatusMessage, setEditingPoi],
+  );
+
+  const salvarLocalizacaoAtual = useCallback(() => {
+    if (!editingPoi) return;
+
+    if (typeof editingPoi.x !== 'number' || typeof editingPoi.y !== 'number') {
+      window.alert('Coordenadas invalidas para salvar a localizacao deste ponto.');
+      return;
+    }
+
+    const nextX = clampMapCoordinate(editingPoi.x, 'x');
+    const nextY = clampMapCoordinate(editingPoi.y, 'y');
+    const nextNodeId = resolveNodeId(nextX, nextY);
+    const nextImageUrl = getAutoAssignedPoiPhotoReference(editingPoi.id, editingPoi.nome, editingPoi.imagemUrl);
+
+    if (!editingPoi.id) {
+      setEditingPoi((current) =>
+        current
+          ? {
+              ...current,
+              x: nextX,
+              y: nextY,
+              nodeId: nextNodeId,
+              imagemUrl: nextImageUrl ?? current.imagemUrl,
+            }
+          : current,
+      );
+      setAdminStatusMessage('Localizacao registrada no editor. Agora salve o rascunho para incluir este novo ponto no arquivo.');
+      return;
+    }
+
+    applyExistingPoiPosition(editingPoi.id, nextX, nextY);
+    setEditingPoi((current) => {
+      if (!current || current.id !== editingPoi.id) return current;
+
+      return {
+        ...current,
+        x: nextX,
+        y: nextY,
+        nodeId: nextNodeId,
+        imagemUrl: nextImageUrl ?? current.imagemUrl,
+      };
+    });
+    setFocusPoint((current) => {
+      if (!current || current.id !== editingPoi.id) return current;
+
+      return {
+        ...current,
+        x: nextX,
+        y: nextY,
+        nodeId: nextNodeId,
+        imagemUrl: nextImageUrl ?? current.imagemUrl,
+      };
+    });
+    setAdminStatusMessage(
+      `Localizacao salva no workspace para ${editingPoi.nome?.trim() || editingPoi.id}. Baixe o JSON, copie o log ou publique quando quiser.`,
+    );
+  }, [
+    editingPoi,
+    clampMapCoordinate,
+    resolveNodeId,
+    setEditingPoi,
+    setAdminStatusMessage,
+    applyExistingPoiPosition,
+    setFocusPoint,
+  ]);
+
+  const handleAdminMapPointPick = useCallback(
+    (point: { x: number; y: number }) => {
+      const nextX = clampMapCoordinate(point.x, 'x');
+      const nextY = clampMapCoordinate(point.y, 'y');
+
+      if (editingPoi) {
+        updateEditingPoiCoordinates(nextX, nextY);
+        return;
+      }
+
+      setEditingPoi({
+        nome: '',
+        tipo: 'atividade',
+        x: nextX,
+        y: nextY,
+        descricao: '',
+        imagemUrl: defaultPoiImages.atividade,
+        contato: '',
+        corDestaque: '',
+        selo: '',
+        nodeId: resolveNodeId(nextX, nextY),
+      });
+      setAdminStatusMessage('Novo ponto criado na posicao clicada. Complete os dados e salve quando quiser.');
+    },
+    [clampMapCoordinate, editingPoi, resolveNodeId, setAdminStatusMessage, setEditingPoi, updateEditingPoiCoordinates],
   );
 
   const startNewPoiDraft = useCallback(() => {
@@ -169,10 +337,10 @@ export const usePoiAdmin = ({
       contato: '',
       corDestaque: '',
       selo: '',
-      nodeId: freeWalkNavigationEnabled ? undefined : findNearestNodeFn(fallbackX, fallbackY, 90) ?? undefined,
+      nodeId: resolveNodeId(fallbackX, fallbackY),
     });
     setAdminStatusMessage('Novo ponto pronto para edicao. Clique no mapa para reposicionar se precisar.');
-  }, [findNearestNodeFn, focusPoint, freeWalkNavigationEnabled, mapHeight, mapWidth, setAdminStatusMessage, setEditingPoi]);
+  }, [focusPoint, mapHeight, mapWidth, resolveNodeId, setAdminStatusMessage, setEditingPoi]);
 
   const buildPoiFromEditingState = useCallback(() => {
     const currentEditingPoi = editingPoi;
@@ -187,7 +355,7 @@ export const usePoiAdmin = ({
       return null;
     }
 
-    const nearestNode = freeWalkNavigationEnabled ? null : findNearestNodeFn(currentEditingPoi.x, currentEditingPoi.y, 90);
+    const nearestNode = resolveNodeId(currentEditingPoi.x, currentEditingPoi.y);
     if (!freeWalkNavigationEnabled && !nearestNode) {
       window.alert('Este ponto esta longe dos corredores de rota. Marque mais perto de um caminho.');
       return null;
@@ -200,20 +368,28 @@ export const usePoiAdmin = ({
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
 
+    const resolvedPoiId = currentEditingPoi.id || `${baseId || 'ponto'}_${Date.now()}`;
+    const resolvedImageUrl =
+      getAutoAssignedPoiPhotoReference(
+        resolvedPoiId,
+        currentEditingPoi.nome.trim(),
+        currentEditingPoi.imagemUrl?.trim() || defaultPoiImages[currentEditingPoi.tipo],
+      ) ?? defaultPoiImages[currentEditingPoi.tipo];
+
     return {
-      id: currentEditingPoi.id || `${baseId || 'ponto'}_${Date.now()}`,
+      id: resolvedPoiId,
       x: currentEditingPoi.x,
       y: currentEditingPoi.y,
       nome: currentEditingPoi.nome.trim(),
       tipo: currentEditingPoi.tipo,
       descricao: currentEditingPoi.descricao?.trim() || undefined,
-      imagemUrl: currentEditingPoi.imagemUrl?.trim() || defaultPoiImages[currentEditingPoi.tipo],
+      imagemUrl: resolvedImageUrl,
       contato: normalizeContact(currentEditingPoi.contato) || undefined,
       corDestaque: normalizeHexColor(currentEditingPoi.corDestaque),
       selo: normalizeBadgeText(currentEditingPoi.selo),
-      nodeId: nearestNode ?? undefined,
+      nodeId: nearestNode,
     } satisfies PointData;
-  }, [editingPoi, findNearestNodeFn, freeWalkNavigationEnabled]);
+  }, [editingPoi, freeWalkNavigationEnabled, resolveNodeId]);
 
   const salvarRascunhoPonto = useCallback(() => {
     const novoPonto = buildPoiFromEditingState();
@@ -266,7 +442,7 @@ export const usePoiAdmin = ({
       setAdminStatusMessage(`Ponto ${normalizedPoi.nome} publicado no servidor.`);
     } catch (error) {
       console.error('Falha ao publicar ponto no backend:', error);
-      window.alert('Nao foi possivel publicar o ponto no servidor. Confira a API e a ADMIN_API_KEY.');
+      window.alert('Nao foi possivel publicar o ponto no servidor.');
       setBackendSyncState('error');
     }
   }, [
@@ -360,7 +536,8 @@ export const usePoiAdmin = ({
       try {
         const content = await file.text();
         const parsed = JSON.parse(content) as unknown;
-        const importedPois = parseStoredPoiList(parsed);
+        const importedSnapshot = parseStoredPoiImport(parsed);
+        const importedPois = importedSnapshot.pois;
 
         if (importedPois.length === 0) {
           window.alert('O arquivo JSON nao possui pontos validos.');
@@ -368,13 +545,20 @@ export const usePoiAdmin = ({
         }
 
         setPois(importedPois);
-        setDraftPoiIds(importedPois.map((poi) => poi.id));
+        setDraftPoiIds(
+          importedSnapshot.draftPoiIds.length > 0 ? importedSnapshot.draftPoiIds : importedPois.map((poi) => poi.id),
+        );
         setPoiDataSource('local-workspace');
         setEditingPoi(importedPois[0]);
         setFocusPoint(importedPois[0]);
         setActivePoiId(importedPois[0].id);
         clearRoute();
-        setAdminStatusMessage(`${importedPois.length} ponto(s) importados para a edicao local.`);
+        const buildMessage = describeMapBuildRegistrationDifference(importedSnapshot.build, CURRENT_MAP_BUILD_REGISTRATION);
+        setAdminStatusMessage(
+          buildMessage
+            ? `${importedPois.length} ponto(s) importados para a edicao local. ${buildMessage}`
+            : `${importedPois.length} ponto(s) importados para a edicao local na build atual (${currentMapBuildLabel}).`,
+        );
       } catch (error) {
         console.error('Falha ao importar JSON de pontos:', error);
         window.alert('Nao foi possivel importar este arquivo JSON.');
@@ -382,7 +566,8 @@ export const usePoiAdmin = ({
     },
     [
       clearRoute,
-      parseStoredPoiList,
+      currentMapBuildLabel,
+      parseStoredPoiImport,
       setActivePoiId,
       setAdminStatusMessage,
       setDraftPoiIds,
@@ -459,7 +644,7 @@ export const usePoiAdmin = ({
       setAdminStatusMessage('Ponto removido do servidor com sucesso.');
     } catch (error) {
       console.error('Falha ao deletar ponto no backend:', error);
-      window.alert('Nao foi possivel excluir o ponto no servidor. Confira a API e a ADMIN_API_KEY.');
+      window.alert('Nao foi possivel excluir o ponto no servidor.');
     }
   }, [
     activePoiId,
@@ -483,15 +668,97 @@ export const usePoiAdmin = ({
   }, [setManualVisiblePoiIds]);
 
   const baixarJson = useCallback(() => {
-    const payload = JSON.stringify(pois, null, 2);
-    const dataStr = `data:text/json;charset=utf-8,${encodeURIComponent(payload)}`;
+    const exportedPois = pois.map(normalizePoiForExport);
+    const payload: PoiAdminExportSnapshot = {
+      version: 7,
+      eventName,
+      updatedAt: new Date().toISOString(),
+      draftPoiIds,
+      pois: exportedPois,
+      build: CURRENT_MAP_BUILD_REGISTRATION,
+    };
+    const payloadText = JSON.stringify(payload, null, 2);
+    const dataStr = `data:text/json;charset=utf-8,${encodeURIComponent(payloadText)}`;
     const link = document.createElement('a');
     link.setAttribute('href', dataStr);
-    link.setAttribute('download', 'locais_evento_social.json');
+    link.setAttribute('download', exportFileName);
     document.body.appendChild(link);
     link.click();
     link.remove();
-  }, [pois]);
+    setAdminStatusMessage(`JSON baixado com registro da build atual (${currentMapBuildLabel}).`);
+  }, [currentMapBuildLabel, draftPoiIds, eventName, exportFileName, normalizePoiForExport, pois, setAdminStatusMessage]);
+
+  const buildAdminTextLog = useCallback(() => {
+    const exportedPois = pois.map(normalizePoiForExport);
+    const lines = [
+      `Evento: ${eventName}`,
+      `Gerado em: ${new Date().toISOString()}`,
+      `Build: ${currentMapBuildLabel}`,
+      `Total de pontos: ${exportedPois.length}`,
+      `Rascunhos locais: ${draftPoiIds.length}`,
+      '',
+      'ESPACOS',
+      '',
+    ];
+
+    exportedPois.forEach((poi, index) => {
+      const photoOption = findPoiPhotoOption(poi.imagemUrl);
+      const photoLabel = photoOption?.fileName ?? poi.imagemUrl?.trim() ?? 'SEM FOTO';
+      const statusLabel = draftPoiIds.includes(poi.id) ? 'RASCUNHO' : 'OK';
+
+      lines.push(
+        `${index + 1}. ${poi.nome}`,
+        `id: ${poi.id}`,
+        `tipo: ${poi.tipo}`,
+        `x: ${Math.round(poi.x)} | y: ${Math.round(poi.y)} | node: ${poi.nodeId ?? (freeWalkNavigationEnabled ? 'livre' : 'sem conexao')}`,
+        `foto: ${photoLabel}`,
+        `imagemUrl: ${poi.imagemUrl ?? 'SEM FOTO'}`,
+        `selo: ${poi.selo ?? '-'}`,
+        `contato: ${poi.contato ?? '-'}`,
+        `status: ${statusLabel}`,
+        `descricao: ${poi.descricao ?? '-'}`,
+        '',
+      );
+    });
+
+    return lines.join('\n');
+  }, [currentMapBuildLabel, draftPoiIds, eventName, freeWalkNavigationEnabled, normalizePoiForExport, pois]);
+
+  const baixarLogCompleto = useCallback(() => {
+    const logText = buildAdminTextLog();
+    const dataStr = `data:text/plain;charset=utf-8,${encodeURIComponent(logText)}`;
+    const fileName = exportFileName.replace(/\.json$/i, '_log.txt');
+    const link = document.createElement('a');
+    link.setAttribute('href', dataStr);
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setAdminStatusMessage('Log completo dos espacos baixado com sucesso.');
+  }, [buildAdminTextLog, exportFileName, setAdminStatusMessage]);
+
+  const copiarLogCompleto = useCallback(async () => {
+    const logText = buildAdminTextLog();
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(logText);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = logText;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+      }
+      setAdminStatusMessage('Log completo copiado. Agora voce pode me enviar o texto direto.');
+    } catch (error) {
+      console.error('Falha ao copiar log completo do admin:', error);
+      window.alert('Nao foi possivel copiar o log automaticamente. Use o botao de baixar log.');
+    }
+  }, [buildAdminTextLog, setAdminStatusMessage]);
 
   const handleSetAdminAgendaPoiLink = useCallback(
     (sessionId: string, poiId: string | null) => {
@@ -549,18 +816,23 @@ export const usePoiAdmin = ({
 
   return {
     updatePoiPosition,
+    salvarLocalizacaoAtual,
     startNewPoiDraft,
     salvarRascunhoPonto,
     publicarPontoAtual,
     publicarRascunhos,
     removerPontoLocal,
     abrirImportadorJson,
+    handleAdminMapPointPick,
     handleAdminImportFileChange,
     restaurarFontePrincipal,
     salvarPonto,
     deletarPonto,
     toggleManualVisibility,
     baixarJson,
+    baixarLogCompleto,
+    copiarLogCompleto,
+    updateEditingPoiCoordinates,
     handleSetAdminAgendaPoiLink,
     handleResetAdminAgendaPoiLinks,
   };

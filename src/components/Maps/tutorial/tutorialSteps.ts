@@ -1,29 +1,34 @@
-import type { TutorialVisual } from '../routes-pins-previews/TutorialStage';
-
 export interface TutorialStep {
+  id: string;
   eyebrow: string;
   title: string;
-  text: string;
-  visual: TutorialVisual;
+  description: string;
+  icon?: string;
 }
 
 export const tutorialSteps: readonly TutorialStep[] = [
   {
-    eyebrow: 'Startup Day',
-    title: 'Mapa e agenda',
-    text: 'Tudo essencial em um fluxo unico.',
-    visual: 'intro',
+    id: 'welcome',
+    eyebrow: 'Boas-vindas',
+    title: 'O mapa do evento na palma da sua mão',
+    description:
+      'Acesse o botão de Cronograma para acompanhar os horários, ver o que esta acontecendo agora e planejar seu proximo destino.',
+    icon: '🗺️',
   },
   {
-    eyebrow: 'Pins',
-    title: 'Abrir local',
-    text: 'Toque, veja e siga.',
-    visual: 'pins',
+    id: 'pins',
+    eyebrow: 'Explorar Locais',
+    title: 'Conheca cada espaço e atração',
+    description:
+      'Toque em qualquer pin do mapa para abrir os detalhes do local, conferir a foto do espaço e navegar pelo conteúdo do evento.',
+    icon: '📍',
   },
   {
-    eyebrow: 'GPS',
-    title: 'Ativar e navegar',
-    text: 'Sua posicao vira a origem automatica.',
-    visual: 'location',
+    id: 'partners',
+    eyebrow: 'Parceiros',
+    title: 'Veja quem faz parte do evento',
+    description:
+      'Use o botão de Parceiros para consultar as marcas e instituições envolvidas, sem sair da experiencia principal do evento para realizar pesquisas externas.',
+    icon: '🤝',
   },
 ] as const;

@@ -1,230 +1,182 @@
 [
   {
-    "id": "entrada_principal",
-    "x": 747,
-    "y": 399,
-    "nome": "Entrada Principal",
-    "tipo": "entrada",
-    "descricao": "Acesso principal do evento para o publico.",
-    "imagemUrl": "/images/pois/indicadores/entrada.svg",
-    "corDestaque": "#92b98c",
-    "selo": "ENT"
-  },
-  {
-    "id": "credenciamento",
-    "x": 777,
-    "y": 399,
-    "nome": "Credenciamento",
-    "tipo": "servico",
-    "descricao": "Retirada de pulseiras, orientacoes e apoio inicial.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#8aaed8",
-    "selo": "CRD"
-  },
-  {
-    "id": "entrada_caravanas",
-    "x": 713,
-    "y": 328,
-    "nome": "Entrada Caravanas",
-    "tipo": "entrada",
-    "descricao": "Acesso reservado para grupos e caravanas.",
-    "imagemUrl": "/images/pois/indicadores/entrada.svg",
-    "corDestaque": "#a4c49b",
-    "selo": "CAR"
-  },
-  {
-    "id": "palco_principal",
-    "x": 784,
-    "y": 342,
-    "nome": "Palco Principal",
-    "tipo": "atividade",
-    "descricao": "Area central das palestras e conteudos principais.",
-    "imagemUrl": "/images/pois/indicadores/evento.svg",
-    "corDestaque": "#d7bf78",
-    "selo": "PAL"
-  },
-  {
-    "id": "banheiros",
-    "x": 764,
-    "y": 313,
-    "nome": "Banheiros",
-    "tipo": "banheiro",
-    "descricao": "Conjunto de banheiros de apoio ao publico.",
-    "imagemUrl": "/images/pois/indicadores/banheiro.svg",
-    "corDestaque": "#9bb8df",
-    "selo": "WC"
-  },
-  {
-    "id": "estande_realidade_virtual",
-    "x": 733,
-    "y": 330,
-    "nome": "Estande Realidade Virtual",
-    "tipo": "atividade",
-    "descricao": "Espaco de demonstracao e experiencia imersiva.",
-    "imagemUrl": "/images/pois/indicadores/evento.svg",
-    "corDestaque": "#9a8bd9",
-    "selo": "ERV"
-  },
-  {
-    "id": "espaco_instagramavel",
-    "x": 745,
-    "y": 326,
-    "nome": "Espaco Instagramavel",
-    "tipo": "atividade",
-    "descricao": "Cenario visual para fotos e conteudo do evento.",
-    "imagemUrl": "/images/pois/indicadores/evento.svg",
-    "corDestaque": "#8f9ddd",
-    "selo": "IGR"
-  },
-  {
-    "id": "area_startups",
-    "x": 797,
-    "y": 393,
+    "id": "area_das_startups",
     "nome": "Area das Startups",
     "tipo": "atividade",
-    "descricao": "Espaco com as startups participantes do Startup Day.",
-    "imagemUrl": "/images/pois/indicadores/evento.svg",
-    "corDestaque": "#8576c9",
-    "selo": "STP"
+    "x": 774,
+    "y": 390,
+    "imagemUrl": "fotopins/Startups.jpeg",
+    "nodeId": "778_392"
   },
   {
-    "id": "barracas_prefeitura",
-    "x": 721,
-    "y": 383,
-    "nome": "Barracas Prefeitura",
+    "id": "area_de_alimentacao",
+    "nome": "Area de Alimentacao",
     "tipo": "servico",
-    "descricao": "Area institucional com os espacos da prefeitura.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#8f98aa",
-    "selo": "PREF"
+    "x": 694,
+    "y": 313,
+    "imagemUrl": "fotopins/Areadealimentacao.jpg",
+    "nodeId": "686_322"
   },
   {
-    "id": "jardim_digital",
-    "x": 733,
-    "y": 385,
-    "nome": "Jardim Digital",
-    "tipo": "servico",
-    "descricao": "Espaco parceiro voltado a tecnologia e inovacao.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#7fb4ad",
-    "selo": "JD"
-  },
-  {
-    "id": "arena_experiencia",
-    "x": 700,
-    "y": 371,
-    "nome": "Arena Experiencia",
+    "id": "area_de_fotos",
+    "nome": "Area de Fotos",
     "tipo": "atividade",
-    "descricao": "Area continua com os espacos dos parceiros e ativacoes abertas ao publico ao longo do dia.",
-    "imagemUrl": "/images/pois/indicadores/evento.svg",
-    "corDestaque": "#9a8bd9",
-    "selo": "ARE"
-  },
-  {
-    "id": "laboratorio_game",
-    "x": 742,
-    "y": 338,
-    "nome": "Laboratório Game",
-    "tipo": "atividade",
-    "descricao": "Espaco das oficinas GameLab na Arena Porto Digital.",
-    "imagemUrl": "/images/pois/indicadores/evento.svg",
-    "corDestaque": "#9a8bd9",
-    "selo": "GLB"
-  },
-  {
-    "id": "sala_economia_criativa_01",
-    "x": 665,
-    "y": 341,
-    "nome": "Sala de Economia Criativa 01",
-    "tipo": "servico",
-    "descricao": "Sala reservada para hotseats e encontros do ecossistema.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#8aaed8",
-    "selo": "EC1"
-  },
-  {
-    "id": "sala_economia_criativa_02",
-    "x": 665,
-    "y": 367,
-    "nome": "Sala de Economia Criativa 02",
-    "tipo": "servico",
-    "descricao": "Sala reservada para hotseats e encontros do ecossistema.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#7698c8",
-    "selo": "EC2"
-  },
-  {
-    "id": "armazem_da_criatividade_1773977448618",
-    "x": 813,
-    "y": 376,
-    "nome": "Armazem da Criatividade",
-    "tipo": "entrada",
-    "descricao": "Acesso lateral para o Laboratorio Game e para as salas de Economia Criativa 01 e 02.",
-    "imagemUrl": "/images/pois/indicadores/entrada.svg",
-    "corDestaque": "#92b98c",
-    "selo": "ARM"
-  },
-  {
-    "id": "senac",
-    "x": 688,
-    "y": 331,
-    "nome": "SENAC",
-    "tipo": "servico",
-    "descricao": "Espaco da instituicao parceira SENAC.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#8aaed8",
-    "selo": "SNC"
-  },
-  {
-    "id": "senai",
-    "x": 680,
-    "y": 374,
-    "nome": "SENAI",
-    "tipo": "servico",
-    "descricao": "Espaco da instituicao parceira SENAI.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#7698c8",
-    "selo": "SNI"
+    "x": 745,
+    "y": 330,
+    "imagemUrl": "fotopins/Areadefotos.jpeg",
+    "nodeId": "744_330"
   },
   {
     "id": "asces",
-    "x": 680,
-    "y": 341,
     "nome": "ASCES",
-    "tipo": "servico",
-    "descricao": "Espaco da instituicao parceira ASCES.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#a7afbc",
-    "selo": "ASC"
+    "tipo": "atividade",
+    "x": 686,
+    "y": 349,
+    "imagemUrl": "fotopins/Asces.jpeg",
+    "nodeId": "682_340"
   },
   {
-    "id": "nassau",
-    "x": 698,
-    "y": 393,
-    "nome": "UNINASSAU",
+    "id": "banheiros",
+    "nome": "Banheiros",
+    "tipo": "banheiro",
+    "x": 764,
+    "y": 313,
+    "imagemUrl": "fotopins/Banheiros.jpeg",
+    "nodeId": "764_312"
+  },
+  {
+    "id": "barracas_prefeitura",
+    "nome": "Barracas Prefeitura",
     "tipo": "servico",
-    "descricao": "Espaco da instituicao parceira UNINASSAU.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#ccb36f",
-    "selo": "NAS"
+    "x": 708,
+    "y": 379,
+    "imagemUrl": "fotopins/Barracasprefeitura.jpeg",
+    "nodeId": "708_384"
+  },
+  {
+    "id": "cafeteria",
+    "nome": "Cafeteria",
+    "tipo": "servico",
+    "x": 814,
+    "y": 390,
+    "imagemUrl": "fotopins/Cafeteria.jpeg",
+    "nodeId": "812_390"
+  },
+  {
+    "id": "credenciamento",
+    "nome": "Credenciamento",
+    "tipo": "servico",
+    "x": 749,
+    "y": 400,
+    "imagemUrl": "fotopins/Credenciamento.jpeg",
+    "nodeId": "746_398"
   },
   {
     "id": "credenciamento_caravanas",
-    "x": 714,
-    "y": 341,
     "nome": "Credenciamento Caravanas",
     "tipo": "servico",
-    "descricao": "Atendimento e credenciamento dedicados aos grupos e caravanas.",
-    "imagemUrl": "/images/pois/indicadores/apoio.svg",
-    "corDestaque": "#7fb4ad",
-    "selo": "CCV"
+    "x": 715,
+    "y": 334,
+    "imagemUrl": "fotopins/Credenciamentocaravanas.jpeg",
+    "nodeId": "712_334"
   },
   {
-    "id": "cafeteria_1773957701772",
-    "x": 809,
+    "id": "entrada_caravanas",
+    "nome": "Entrada Caravanas",
+    "tipo": "entrada",
+    "x": 713,
+    "y": 322,
+    "imagemUrl": "fotopins/Entradacaravanas.jpeg",
+    "nodeId": "712_330"
+  },
+  {
+    "id": "entrada_principal",
+    "nome": "Entrada Principal",
+    "tipo": "entrada",
+    "x": 752,
+    "y": 389,
+    "imagemUrl": "fotopins/Entradaprincipal.jpeg",
+    "nodeId": "752_384"
+  },
+  {
+    "id": "estande_realidade_virtual",
+    "nome": "Estande Realidade Virtual",
+    "tipo": "atividade",
+    "x": 730,
+    "y": 330,
+    "imagemUrl": "fotopins/Realidadevirtual.jpeg",
+    "nodeId": "734_330"
+  },
+  {
+    "id": "jardim_digital",
+    "nome": "Jardim Digital",
+    "tipo": "atividade",
+    "x": 722,
+    "y": 393,
+    "imagemUrl": "fotopins/Jardimdigital.jpeg",
+    "nodeId": "722_384"
+  },
+  {
+    "id": "palco_principal",
+    "nome": "Palco Principal",
+    "tipo": "atividade",
+    "x": 778,
+    "y": 344,
+    "imagemUrl": "fotopins/Palcoprincipal.jpeg",
+    "nodeId": "780_346"
+  },
+  {
+    "id": "sala_da_arena_gamer",
+    "nome": "Sala da Arena Gamer",
+    "tipo": "atividade",
+    "x": 838,
+    "y": 340,
+    "imagemUrl": "fotopins/saladaarenagamer.jpeg",
+    "nodeId": "838_374"
+  },
+  {
+    "id": "sala_de_economia_criativa_02",
+    "nome": "Sala de Economia Criativa 02",
+    "tipo": "atividade",
+    "x": 863,
+    "y": 340,
+    "imagemUrl": "fotopins/Saladeeconomiacriativa.jpeg",
+    "nodeId": "876_340"
+  },
+  {
+    "id": "sala_de_empreendedorismo",
+    "nome": "Sala de Empreendedorismo",
+    "tipo": "atividade",
+    "x": 865,
+    "y": 387,
+    "imagemUrl": "fotopins/Saladeempreendedorismo.jpeg",
+    "nodeId": "864_376"
+  },
+  {
+    "id": "senac",
+    "nome": "SENAC",
+    "tipo": "atividade",
+    "x": 697,
+    "y": 331,
+    "imagemUrl": "fotopins/Senac.jpeg",
+    "nodeId": "686_330"
+  },
+  {
+    "id": "senai",
+    "nome": "SENAI",
+    "tipo": "atividade",
+    "x": 684,
+    "y": 374,
+    "imagemUrl": "fotopins/Senai.jpeg",
+    "nodeId": "678_374"
+  },
+  {
+    "id": "uninassau",
+    "nome": "UNINASSAU",
+    "tipo": "atividade",
+    "x": 696,
     "y": 392,
-    "nome": "CAFETERIA",
-    "tipo": "servico",
-    "imagemUrl": "/images/pois/indicadores/evento.svg"
+    "imagemUrl": "fotopins/Uninassau.jpeg",
+    "nodeId": "700_392"
   }
 ]

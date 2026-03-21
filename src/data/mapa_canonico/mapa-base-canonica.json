@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "eventName": "GNOSTART",
+  "route": {
+    "referenceMapSource": "../public/maps/mapa_geral.svg",
+    "logicalVectorSource": "logica_nova.svg",
+    "logicalMaskSource": "logica_nova.png",
+    "graphOutput": "../src/data/navGraph.json",
+    "walkableMode": "white-only",
+    "whiteThreshold": 220,
+    "alphaThreshold": 1,
+    "gridSize": 2,
+    "alignment": {
+      "offsetX": 255.8,
+      "offsetY": -0.5,
+      "scaleX": 0.665,
+      "scaleY": 0
+    },
+    "componentBridgeMaxDistance": 18,
+    "componentBridgeMaxSize": 80,
+    "mapLogicWidth": 1527,
+    "mapLogicHeight": 912,
+    "svgDensity": 288
+  },
+  "eventBoundaryImagePoints": [
+    { "x": 559, "y": 316 },
+    { "x": 636, "y": 316 },
+    { "x": 646, "y": 321 },
+    { "x": 698, "y": 321 },
+    { "x": 740, "y": 300 },
+    { "x": 827, "y": 315 },
+    { "x": 918, "y": 314 },
+    { "x": 921, "y": 399 },
+    { "x": 748, "y": 400 },
+    { "x": 697, "y": 403 },
+    { "x": 647, "y": 401 },
+    { "x": 634, "y": 396 },
+    { "x": 560, "y": 397 }
+  ],
+  "pins": [
+    {
+      "id": "area_das_startups",
+      "nome": "Area das Startups",
+      "tipo": "atividade",
+      "x": 774,
+      "y": 390,
+      "imagemUrl": "fotopins/Startups.jpeg"
+    },
+    {
+      "id": "area_de_alimentacao",
+      "nome": "Area de Alimentacao",
+      "tipo": "servico",
+      "x": 694,
+      "y": 313,
+      "imagemUrl": "fotopins/Areadealimentacao.jpg"
+    },
+    {
+      "id": "area_de_fotos",
+      "nome": "Area de Fotos",
+      "tipo": "atividade",
+      "x": 745,
+      "y": 330,
+      "imagemUrl": "fotopins/Areadefotos.jpeg"
+    },
+    {
+      "id": "asces",
+      "nome": "ASCES",
+      "tipo": "atividade",
+      "x": 686,
+      "y": 349,
+      "imagemUrl": "fotopins/Asces.jpeg"
+    },
+    {
+      "id": "banheiros",
+      "nome": "Banheiros",
+      "tipo": "banheiro",
+      "x": 764,
+      "y": 313,
+      "imagemUrl": "fotopins/Banheiros.jpeg"
+    },
+    {
+      "id": "barracas_prefeitura",
+      "nome": "Barracas Prefeitura",
+      "tipo": "servico",
+      "x": 708,
+      "y": 379,
+      "imagemUrl": "fotopins/Barracasprefeitura.jpeg"
+    },
+    {
+      "id": "cafeteria",
+      "nome": "Cafeteria",
+      "tipo": "servico",
+      "x": 814,
+      "y": 390,
+      "imagemUrl": "fotopins/Cafeteria.jpeg"
+    },
+    {
+      "id": "credenciamento",
+      "nome": "Credenciamento",
+      "tipo": "servico",
+      "x": 749,
+      "y": 400,
+      "imagemUrl": "fotopins/Credenciamento.jpeg"
+    },
+    {
+      "id": "credenciamento_caravanas",
+      "nome": "Credenciamento Caravanas",
+      "tipo": "servico",
+      "x": 715,
+      "y": 334,
+      "imagemUrl": "fotopins/Credenciamentocaravanas.jpeg"
+    },
+    {
+      "id": "entrada_caravanas",
+      "nome": "Entrada Caravanas",
+      "tipo": "entrada",
+      "x": 713,
+      "y": 322,
+      "imagemUrl": "fotopins/Entradacaravanas.jpeg"
+    },
+    {
+      "id": "entrada_principal",
+      "nome": "Entrada Principal",
+      "tipo": "entrada",
+      "x": 752,
+      "y": 389,
+      "imagemUrl": "fotopins/Entradaprincipal.jpeg"
+    },
+    {
+      "id": "estande_realidade_virtual",
+      "nome": "Estande Realidade Virtual",
+      "tipo": "atividade",
+      "x": 730,
+      "y": 330,
+      "imagemUrl": "fotopins/Realidadevirtual.jpeg"
+    },
+    {
+      "id": "jardim_digital",
+      "nome": "Jardim Digital",
+      "tipo": "atividade",
+      "x": 722,
+      "y": 393,
+      "imagemUrl": "fotopins/Jardimdigital.jpeg"
+    },
+    {
+      "id": "palco_principal",
+      "nome": "Palco Principal",
+      "tipo": "atividade",
+      "x": 778,
+      "y": 344,
+      "imagemUrl": "fotopins/Palcoprincipal.jpeg"
+    },
+    {
+      "id": "sala_da_arena_gamer",
+      "nome": "Sala da Arena Gamer",
+      "tipo": "atividade",
+      "x": 838,
+      "y": 340,
+      "imagemUrl": "fotopins/saladaarenagamer.jpeg"
+    },
+    {
+      "id": "sala_de_economia_criativa_02",
+      "nome": "Sala de Economia Criativa 02",
+      "tipo": "atividade",
+      "x": 863,
+      "y": 340,
+      "imagemUrl": "fotopins/Saladeeconomiacriativa.jpeg"
+    },
+    {
+      "id": "sala_de_empreendedorismo",
+      "nome": "Sala de Empreendedorismo",
+      "tipo": "atividade",
+      "x": 865,
+      "y": 387,
+      "imagemUrl": "fotopins/Saladeempreendedorismo.jpeg"
+    },
+    {
+      "id": "senac",
+      "nome": "SENAC",
+      "tipo": "atividade",
+      "x": 697,
+      "y": 331,
+      "imagemUrl": "fotopins/Senac.jpeg"
+    },
+    {
+      "id": "senai",
+      "nome": "SENAI",
+      "tipo": "atividade",
+      "x": 684,
+      "y": 374,
+      "imagemUrl": "fotopins/Senai.jpeg"
+    },
+    {
+      "id": "uninassau",
+      "nome": "UNINASSAU",
+      "tipo": "atividade",
+      "x": 696,
+      "y": 392,
+      "imagemUrl": "fotopins/Uninassau.jpeg"
+    }
+  ]
+}

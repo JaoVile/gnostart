@@ -1,27 +1,6 @@
 import type { AgendaSession, AgendaSessionPoiLinkOverrides, PointData } from '../types';
 
-const poiSearchAliasMap: Record<string, string[]> = {
-  credenciamento: ['recepcao e credenciamento', 'check in'],
-  barracas_prefeitura: ['area de alimentacao', 'arena foodtruck', 'foodtruck'],
-  arena_experiencia: ['arena experiencia', 'espacos dos parceiros', 'espaco dos parceiros', 'parceiros abertos'],
-  armazem_da_criatividade_1773977448618: [
-    'armazem da criatividade',
-    'acesso laboratorio game',
-    'acesso sala economia criativa',
-    'laboratorio game',
-    'gamelab',
-    'arena porto digital',
-    'economia criativa 1',
-    'economia criativa 2',
-    'sala 1',
-    'sala 2',
-  ],
-  laboratorio_game: ['gamelab', 'arena porto digital'],
-  sala_economia_criativa_01: ['economia criativa 1', 'sala 1'],
-  sala_economia_criativa_02: ['economia criativa 2', 'sala 2'],
-  senai: ['sistema fiepe'],
-  nassau: ['uninassau'],
-};
+const poiSearchAliasMap: Record<string, string[]> = {};
 
 export const normalizeContact = (value?: string) => value?.trim() ?? '';
 
@@ -46,7 +25,7 @@ export const searchTermsMatch = (left: string, right: string) =>
 export const resolveSessionPoiLinkId = (
   session: AgendaSession,
   overrides?: AgendaSessionPoiLinkOverrides,
-) => overrides?.[session.id] ?? session.linkedPoiId ?? null;
+) => overrides?.[session.id] ?? null;
 
 export const sessionMatchesPoi = (
   session: AgendaSession,

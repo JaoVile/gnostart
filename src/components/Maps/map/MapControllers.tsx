@@ -1,7 +1,6 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { LatLngBounds } from 'leaflet';
 import { useMap, useMapEvents } from 'react-leaflet';
-import type { EditingPoi } from '../types';
 import { MAP_VIEW_CENTER, resolveOfficialMapZoomConfig } from '../../../config/mapConfig';
 
 const clampNumber = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -127,17 +126,15 @@ export const MapInteractionEvents = ({
   isAdmin,
   suppressAdminMapClickRef,
   latLngToImageOverlay,
-  defaultActivityImageUrl,
   onPublicMapClick,
-  onAdminDraftClick,
+  onAdminMapClick,
   onZoomLevelChange,
 }: {
   isAdmin: boolean;
   suppressAdminMapClickRef: MutableRefObject<boolean>;
   latLngToImageOverlay: (lat: number, lng: number) => { x: number; y: number };
-  defaultActivityImageUrl: string;
   onPublicMapClick: (point: { lat: number; lng: number; x: number; y: number }) => void;
-  onAdminDraftClick: (draft: EditingPoi) => void;
+  onAdminMapClick: (point: { x: number; y: number }) => void;
   onZoomLevelChange: (value: number) => void;
 }) => {
   useMapEvents({
@@ -160,17 +157,7 @@ export const MapInteractionEvents = ({
         return;
       }
 
-      onAdminDraftClick({
-        nome: '',
-        tipo: 'atividade',
-        x,
-        y,
-        descricao: '',
-        imagemUrl: defaultActivityImageUrl,
-        contato: '',
-        corDestaque: '',
-        selo: '',
-      });
+      onAdminMapClick({ x, y });
     },
     zoomend(event) {
       onZoomLevelChange(event.target.getZoom());

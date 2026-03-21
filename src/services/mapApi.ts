@@ -53,14 +53,13 @@ export interface UpsertPoiPayload {
 }
 
 const MAP_ID = import.meta.env.VITE_MAP_ID || 'default_map';
-const ADMIN_API_KEY = import.meta.env.VITE_ADMIN_API_KEY || '';
+export const BACKEND_POIS_BOOTSTRAP_ENABLED = import.meta.env.VITE_ENABLE_BACKEND_POIS === 'true';
 const BOOTSTRAP_REQUEST_DEDUPE_MS = 600;
 let bootstrapRequestPromise: Promise<MapBootstrapResponse> | null = null;
 
 const buildHeaders = (contentType?: string): Headers => {
   const headers = new Headers();
   if (contentType) headers.set('Content-Type', contentType);
-  if (ADMIN_API_KEY) headers.set('x-admin-key', ADMIN_API_KEY);
   return headers;
 };
 
@@ -96,7 +95,11 @@ const requestJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
 export const fetchMapBootstrap = () => {
   if (!bootstrapRequestPromise) {
     bootstrapRequestPromise = requestJson<MapBootstrapResponse>(
-      buildApiUrl(`/api/v1/map/bootstrap?mapId=${encodeURIComponent(MAP_ID)}&includeGraph=false`),
+      buildApiUrl(
+        `/api/v1/map/bootstrap?mapId=${encodeURIComponent(MAP_ID)}&includeGraph=false&includePois=${
+          BACKEND_POIS_BOOTSTRAP_ENABLED ? 'true' : 'false'
+        }`,
+      ),
     ).finally(() => {
       globalThis.setTimeout(() => {
         bootstrapRequestPromise = null;

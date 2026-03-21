@@ -1,5 +1,6 @@
 import L from 'leaflet';
 import pinMapaSvg from '../../../assets/pin_mapa.svg?raw';
+import type { PoiPinScaleTier, PoiPinSizeByTier } from '../../../config/mapConfig';
 import type { PointData, PoiType } from '../types';
 
 export const BRAND_COLORS = {
@@ -69,19 +70,7 @@ const poiMarkerGlyphs = {
     "<svg viewBox='0 0 24 24' width='64' height='64' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M5 20V6.3L12 3.8L19 6.3V20' stroke='white' stroke-width='1.9' stroke-linejoin='round'/><path d='M9 9.2H9.01M15 9.2H15.01M9 13.2H9.01M15 13.2H15.01M12 20V16.2' stroke='white' stroke-width='1.9' stroke-linecap='round'/></svg>",
 } as const;
 
-const poiMarkerGlyphById: Partial<Record<string, keyof typeof poiMarkerGlyphs>> = {
-  palco_principal: 'microfone',
-  banheiros: 'banheiro',
-  estande_realidade_virtual: 'estande',
-  espaco_instagramavel: 'estande',
-  area_startups: 'startup',
-  barracas_prefeitura: 'organizacao',
-  jardim_digital: 'organizacao',
-  senac: 'organizacao',
-  senai: 'organizacao',
-  asces: 'organizacao',
-  nassau: 'organizacao',
-};
+const poiMarkerGlyphById: Partial<Record<string, keyof typeof poiMarkerGlyphs>> = {};
 
 const PIN_MAPA_ASPECT_RATIO = 640 / 512;
 const PIN_MAPA_TIP_RATIO_Y = 585 / 640;
@@ -92,20 +81,6 @@ const PIN_MAPA_PHOTO_FRAME = {
 };
 
 const poiIconCache = new Map<string, L.DivIcon>();
-
-const poiPinSizeByTier = {
-  medium: 24,
-  'medium-large': 34,
-  large: 42,
-} as const;
-
-const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 
 const hexToRgb = (value: string) => {
   const sanitized = value.replace('#', '').trim();
@@ -229,11 +204,6 @@ const colorizePinMapaSvg = (svgMarkup: string, accent: string) =>
 
 const sanitizeSvgScopeId = (value: string) => value.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
 
-const isVectorAssetUrl = (value: string) => /\.svg(?:[?#].*)?$/i.test(value);
-
-const isDefaultPoiIndicatorUrl = (imageUrl: string) =>
-  imageUrl.startsWith('/images/pois/indicadores/') || Object.values(defaultPoiImages).includes(imageUrl);
-
 const buildPoiMarkerFallbackArtwork = (poi: PointData, clipId: string, accent: string) => {
   const { x, y, size } = PIN_MAPA_PHOTO_FRAME;
   const cx = x + size / 2;
@@ -251,20 +221,7 @@ const buildPoiMarkerFallbackArtwork = (poi: PointData, clipId: string, accent: s
   )}"/><circle cx="${cx}" cy="${cy}" r="84" fill="${outerFill}"/><circle cx="${cx}" cy="${cy}" r="68" fill="${innerFill}" stroke="${ringStroke}" stroke-width="6"/><g transform="translate(${cx - 33}, ${cy - 33})">${glyphMarkup}</g></g>`;
 };
 
-const buildPoiMarkerImageMarkup = (poi: PointData, imageUrl: string, clipId: string, accent: string) => {
-  if (isDefaultPoiIndicatorUrl(imageUrl)) {
-    return buildPoiMarkerFallbackArtwork(poi, clipId, accent);
-  }
-
-  const imageFit = isVectorAssetUrl(imageUrl) ? 'xMidYMid meet' : 'xMidYMid slice';
-  const backdrop = mixColors(accent, '#ffffff', 0.88);
-  const { x, y, size } = PIN_MAPA_PHOTO_FRAME;
-  return `<g clip-path="url(#${clipId})"><rect x="${x}" y="${y}" width="${size}" height="${size}" fill="${backdrop}"/><image href="${escapeHtml(
-    imageUrl,
-  )}" x="${x}" y="${y}" width="${size}" height="${size}" preserveAspectRatio="${imageFit}" opacity="0.98"/></g>`;
-};
-
-const createPoiMarkerSvg = (poi: PointData, accent: string, imageUrl: string, scopeId: string) => {
+const createPoiMarkerSvg = (poi: PointData, accent: string, scopeId: string) => {
   let svgMarkup = scopeSvgIds(pinMapaSvg, scopeId);
   svgMarkup = colorizePinMapaSvg(svgMarkup, accent);
 
@@ -273,7 +230,7 @@ const createPoiMarkerSvg = (poi: PointData, accent: string, imageUrl: string, sc
     `<g clip-path="url\\(#${escapeRegExp(clipId)}\\)">[\\s\\S]*?<\\/g>`,
     'i',
   );
-  svgMarkup = svgMarkup.replace(clipGroupPattern, buildPoiMarkerImageMarkup(poi, imageUrl, clipId, accent));
+  svgMarkup = svgMarkup.replace(clipGroupPattern, buildPoiMarkerFallbackArtwork(poi, clipId, accent));
 
   return svgMarkup.replace('<svg ', '<svg class="poi-marker-svg" ');
 };
@@ -292,9 +249,8 @@ const createPoiIcon = (
   size = 34,
   isHighlighted = false,
 ) => {
-  const markerImageUrl = poi.imagemUrl || defaultPoiImages[poi.tipo];
   const scopeId = `poi-marker-${sanitizeSvgScopeId(poi.id)}-${isHighlighted ? 'active' : 'idle'}`;
-  const svgMarkup = createPoiMarkerSvg(poi, accent, markerImageUrl, scopeId);
+  const svgMarkup = createPoiMarkerSvg(poi, accent, scopeId);
   const height = Math.round(size * PIN_MAPA_ASPECT_RATIO);
   return new L.DivIcon({
     html: `<div class='poi-marker-shell poi-marker-shell--svg${isHighlighted ? ' is-highlighted' : ''}' style='--poi-width:${size}px; --poi-height:${height}px;'><span class='poi-marker-art'>${svgMarkup}</span></div>`,
@@ -307,13 +263,13 @@ const createPoiIcon = (
 
 export const getPoiIcon = (
   poi: PointData,
-  sizeTier: keyof typeof poiPinSizeByTier,
+  sizeTier: PoiPinScaleTier,
+  pinSizes: PoiPinSizeByTier,
   isHighlighted = false,
 ) => {
   const palette = getPoiPalette(poi);
-  const size = poiPinSizeByTier[sizeTier];
-  const markerImageUrl = poi.imagemUrl || defaultPoiImages[poi.tipo];
-  const cacheKey = `${poi.id}|${palette.accent}|${markerImageUrl}|${sizeTier}|${size}|${isHighlighted ? 1 : 0}`;
+  const size = pinSizes[sizeTier];
+  const cacheKey = `${poi.id}|${palette.accent}|${sizeTier}|${size}|${isHighlighted ? 1 : 0}`;
   const cached = poiIconCache.get(cacheKey);
   if (cached) return cached;
 

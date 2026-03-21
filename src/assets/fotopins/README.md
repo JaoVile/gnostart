@@ -1,0 +1,40 @@
+# Referencia das fotos do mapa
+
+Use este arquivo como fonte rapida para conferir o mapeamento esperado entre nome do pin, localizacao e foto.
+
+Formato:
+
+```txt
+nome/x: valor | y: valor/nomefoto.ext
+```
+
+Referencia atual:
+
+```txt
+Area das Startups/x: 774 | y: 390/Startups.jpeg
+Area de Alimentacao/x: 694 | y: 313/Areadealimentacao.jpg
+Area de Fotos/x: 745 | y: 330/Areadefotos.jpeg
+ASCES/x: 686 | y: 349/Asces.jpeg
+Banheiros/x: 764 | y: 313/Banheiros.jpeg
+Barracas Prefeitura/x: 708 | y: 379/Barracasprefeitura.jpeg
+Cafeteria/x: 814 | y: 390/Cafeteria.jpeg
+Credenciamento/x: 749 | y: 400/Credenciamento.jpeg
+Credenciamento Caravanas/x: 715 | y: 334/Credenciamentocaravanas.jpeg
+Entrada Caravanas/x: 713 | y: 322/Entradacaravanas.jpeg
+Entrada Principal/x: 752 | y: 389/Entradaprincipal.jpeg
+Estande Realidade Virtual/x: 730 | y: 330/Realidadevirtual.jpeg
+Jardim Digital/x: 722 | y: 393/Jardimdigital.jpeg
+Palco Principal/x: 778 | y: 344/Palcoprincipal.jpeg
+Sala da Arena Gamer/x: 838 | y: 340/saladaarenagamer.jpeg
+Sala de Economia Criativa 02/x: 863 | y: 340/Saladeeconomiacriativa.jpeg
+Sala de Empreendedorismo/x: 865 | y: 387/Saladeempreendedorismo.jpeg
+SENAC/x: 697 | y: 331/Senac.jpeg
+SENAI/x: 684 | y: 374/Senai.jpeg
+UNINASSAU/x: 696 | y: 392/Uninassau.jpeg
+```
+
+Observacoes rapidas:
+
+- Os nomes de arquivo acima seguem exatamente o que existe hoje em `src/assets/fotopins`.
+- Se uma foto for renomeada, atualize este `README.md` e o arquivo `pins-referencia.txt`.
+- A linha de referencia usa sempre a ordem `nome/localizacao/nomefoto`.

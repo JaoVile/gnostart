@@ -1,11 +1,12 @@
-import type {
-  ChangeEvent,
-  CSSProperties,
-  Dispatch,
-  RefObject,
-  SetStateAction,
-} from 'react';
+import { useState, type ChangeEvent, type CSSProperties, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { EditingPoi, PointData, PoiType } from '../types';
+import {
+  findPoiPhotoOption,
+  getStoredPoiPhotoReference,
+  getSuggestedPoiPhotoOption,
+  poiPhotoLibrary,
+  resolvePoiPhotoUrl,
+} from '../map/poiPhotos';
 
 type SourceMeta = {
   label: string;
@@ -27,11 +28,19 @@ type AdminAgendaPoiLinkOption = {
   isPubliclyHidden: boolean;
 };
 
+type AdminPoiSummaryItem = {
+  id: string;
+  linhaCompleta: string;
+};
+
 type MapAdminPanelProps = {
   adminImportInputRef: RefObject<HTMLInputElement | null>;
   onImportFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  isPinsSummaryOpen: boolean;
+  onClosePinsSummary: () => void;
   freeWalkNavigationEnabled: boolean;
   currentSourceMeta: SourceMeta;
+  currentMapBuildLabel: string;
   backendSyncLabel: string;
   poisCount: number;
   draftPoiCount: number;
@@ -52,6 +61,7 @@ type MapAdminPanelProps = {
   adminAgendaPoiLinkOptions: AdminAgendaPoiLinkOption[];
   onSetAgendaPoiLink: (sessionId: string, poiId: string | null) => void;
   onResetAgendaPoiLinks: () => void;
+  allAdminPois: PointData[];
   filteredAdminPois: PointData[];
   draftPoiIdSet: Set<string>;
   editingPoiId?: string | null;
@@ -60,6 +70,8 @@ type MapAdminPanelProps = {
   onSelectPoi: (poi: PointData) => void;
   onRestorePrimarySource: () => void;
   onDownloadJson: () => void;
+  onDownloadLog: () => void;
+  onCopyLog: () => void;
   onExitAdmin: () => void;
 };
 
@@ -79,8 +91,12 @@ type MapAdminEditorProps = {
   editingBadgePreview: string;
   hasInvalidEditingAccentColor: boolean;
   setEditingPoi: Dispatch<SetStateAction<EditingPoi | null>>;
+  mapWidth: number;
+  mapHeight: number;
   adminDenseInputStyle: CSSProperties;
   adminDenseButtonStyle: CSSProperties;
+  onPositionInputChange: (x: number, y: number) => void;
+  onSaveLocation: () => void;
   onSaveDraft: () => void;
   onPublishNow: () => void;
   onRemoveLocal: (id: string) => void;
@@ -91,8 +107,11 @@ type MapAdminEditorProps = {
 export const MapAdminPanel = ({
   adminImportInputRef,
   onImportFileChange,
+  isPinsSummaryOpen,
+  onClosePinsSummary,
   freeWalkNavigationEnabled,
   currentSourceMeta,
+  currentMapBuildLabel,
   backendSyncLabel,
   poisCount,
   draftPoiCount,
@@ -113,6 +132,7 @@ export const MapAdminPanel = ({
   adminAgendaPoiLinkOptions,
   onSetAgendaPoiLink,
   onResetAgendaPoiLinks,
+  allAdminPois,
   filteredAdminPois,
   draftPoiIdSet,
   editingPoiId,
@@ -121,13 +141,28 @@ export const MapAdminPanel = ({
   onSelectPoi,
   onRestorePrimarySource,
   onDownloadJson,
+  onDownloadLog,
+  onCopyLog,
   onExitAdmin,
-}: MapAdminPanelProps) => (
-  <>
+}: MapAdminPanelProps) => {
+  const adminPoiSummaryRows: AdminPoiSummaryItem[] = [...allAdminPois]
+    .sort((left, right) => left.nome.localeCompare(right.nome, 'pt-BR'))
+    .map((poi) => {
+      const resolvedPhotoOption = findPoiPhotoOption(poi.imagemUrl) ?? getSuggestedPoiPhotoOption(poi.id, poi.nome);
+      const localizacao = `x: ${Math.round(poi.x)} | y: ${Math.round(poi.y)}`;
+      const fotoAssociada = resolvedPhotoOption?.fileName ?? 'SEM FOTO NA PASTA';
+      return {
+        id: poi.id,
+        linhaCompleta: `${poi.nome}/${localizacao}/${fotoAssociada}`,
+      };
+    });
+
+  return (
+    <>
     <input
       ref={adminImportInputRef}
       type='file'
-      accept='application/json'
+      accept='.json,application/json'
       onChange={onImportFileChange}
       style={{ display: 'none' }}
     />
@@ -145,8 +180,8 @@ export const MapAdminPanel = ({
         <h2 style={{ margin: 0, fontSize: '16px' }}>Painel administrativo</h2>
         <p style={{ margin: '4px 0 0 0', fontSize: '11px', opacity: 0.82 }}>
           {freeWalkNavigationEnabled
-            ? 'Gestao de pontos com navegacao livre ativa. As rotas nao dependem mais do grafo do mapa-logica.'
-            : 'Gestao de pontos com base local de seguranca. A malha de rotas continua vindo do grafo local do aplicativo.'}
+            ? 'Gestao de pontos com navegacao livre ativa. As rotas nao dependem mais do grafo da logica_nova.'
+            : 'Gestao de pontos com base local de seguranca. A malha de rotas continua vindo do grafo local da logica_nova.'}
         </p>
       </div>
 
@@ -178,6 +213,7 @@ export const MapAdminPanel = ({
           {currentSourceMeta.label}
         </div>
         <div style={{ fontSize: 11, opacity: 0.88 }}>{backendSyncLabel}</div>
+        <div style={{ fontSize: 10, opacity: 0.72 }}>Build atual: {currentMapBuildLabel}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
           {[
             ['Pontos', poisCount],
@@ -215,7 +251,7 @@ export const MapAdminPanel = ({
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={onOpenJsonImporter} className='btn btn-neutral' style={adminDenseButtonStyle}>
-          Importar JSON
+          Carregar arquivo (.json)
         </button>
         <button onClick={onPublishDrafts} className='btn btn-success' style={adminDenseButtonStyle}>
           Publicar rascunhos
@@ -426,6 +462,15 @@ export const MapAdminPanel = ({
       <button onClick={onRestorePrimarySource} className='btn btn-neutral' style={adminDenseButtonStyle}>
         Descartar workspace
       </button>
+      <button onClick={onOpenJsonImporter} className='btn btn-neutral' style={adminDenseButtonStyle}>
+        Carregar arquivo
+      </button>
+      <button onClick={onCopyLog} className='btn btn-neutral' style={adminDenseButtonStyle}>
+        Copiar log
+      </button>
+      <button onClick={onDownloadLog} className='btn btn-neutral' style={adminDenseButtonStyle}>
+        Baixar log
+      </button>
       <button onClick={onDownloadJson} className='btn btn-success' style={adminDenseButtonStyle}>
         Baixar JSON
       </button>
@@ -433,8 +478,95 @@ export const MapAdminPanel = ({
         Sair do modo admin
       </button>
     </div>
+
+    {isPinsSummaryOpen && (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 3500,
+          background: 'rgba(19, 17, 25, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+        }}
+        onClick={onClosePinsSummary}
+      >
+        <div
+          style={{
+            width: 'min(1040px, 100%)',
+            maxHeight: '86vh',
+            background: '#ffffff',
+            borderRadius: 18,
+            boxShadow: '0 30px 80px rgba(11, 15, 25, 0.28)',
+            border: '1px solid rgba(214, 222, 235, 0.9)',
+            display: 'grid',
+            gridTemplateRows: 'auto minmax(0, 1fr)',
+            overflow: 'hidden',
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div
+            style={{
+              padding: '16px 18px 12px',
+              borderBottom: '1px solid #edf1f4',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+            }}
+          >
+            <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#1f1a33' }}>Lista completa dos pins</div>
+              <div style={{ fontSize: 12, color: '#687385' }}>
+                {adminPoiSummaryRows.length} linha(s) com nome, foto associada e localizacao x/y.
+              </div>
+            </div>
+            <button
+              type='button'
+              onClick={onClosePinsSummary}
+              style={{ ...adminDenseButtonStyle, minWidth: 92 }}
+              className='btn btn-neutral'
+            >
+              Fechar
+            </button>
+          </div>
+
+          <div style={{ padding: '16px 18px 18px', overflowY: 'auto' }}>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {adminPoiSummaryRows.map((row) => (
+                <div
+                  key={row.id}
+                  style={{
+                    padding: '10px',
+                    borderRadius: 12,
+                    border: '1px solid #e7eaf0',
+                    background: '#fbfcfe',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: '#23193a',
+                      lineHeight: 1.5,
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {row.linhaCompleta}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
   </>
-);
+  );
+};
 
 export const MapAdminEditor = ({
   isOpen,
@@ -447,215 +579,499 @@ export const MapAdminEditor = ({
   editingBadgePreview,
   hasInvalidEditingAccentColor,
   setEditingPoi,
+  mapWidth,
+  mapHeight,
   adminDenseInputStyle,
   adminDenseButtonStyle,
+  onPositionInputChange,
+  onSaveLocation,
   onSaveDraft,
   onPublishNow,
   onRemoveLocal,
   onDeleteFromServer,
   onClose,
 }: MapAdminEditorProps) => {
+  const [isPhotoLibraryOpen, setIsPhotoLibraryOpen] = useState(false);
+  const selectedPhotoOption = findPoiPhotoOption(editingPoi?.imagemUrl);
+  const selectedPhotoPreviewUrl = resolvePoiPhotoUrl(editingPoi?.imagemUrl);
+  const hasSelectedPhoto = Boolean(editingPoi?.imagemUrl && editingPoi.imagemUrl.trim().length > 0);
+  const suggestedPhotoOption = getSuggestedPoiPhotoOption(editingPoi?.id, editingPoi?.nome);
+  const suggestedPhotoReference = suggestedPhotoOption ? getStoredPoiPhotoReference(suggestedPhotoOption) : null;
+  const canApplySuggestedPhoto = Boolean(suggestedPhotoReference && suggestedPhotoReference !== (editingPoi?.imagemUrl?.trim() ?? ''));
+
   if (!isOpen || !editingPoi) return null;
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: '16px',
-        right: '16px',
-        width: '300px',
-        maxHeight: '84vh',
-        overflowY: 'auto',
-        background: 'var(--color-surface)',
-        padding: '14px',
-        borderRadius: '10px',
-        border: '1px solid var(--color-border)',
-        boxShadow: 'var(--shadow-float)',
-        zIndex: 3000,
-      }}
-      className='map-floating-panel'
-    >
-      <h3 style={{ marginTop: 0, marginBottom: '10px', fontSize: '16px' }}>{editingPoi.id ? 'Editar ponto' : 'Novo ponto'}</h3>
-
+    <>
       <div
         style={{
-          display: 'grid',
-          gap: 8,
-          marginBottom: 10,
-          padding: '8px 10px',
-          borderRadius: 10,
-          background: 'var(--color-surface-soft)',
+          position: 'absolute',
+          top: '16px',
+          right: '16px',
+          width: '300px',
+          maxHeight: '84vh',
+          overflowY: 'auto',
+          background: 'var(--color-surface)',
+          padding: '14px',
+          borderRadius: '10px',
           border: '1px solid var(--color-border)',
+          boxShadow: 'var(--shadow-float)',
+          zIndex: 3000,
         }}
+        className='map-floating-panel'
       >
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              minHeight: 28,
-              padding: '0 10px',
-              borderRadius: 999,
-              background: editingPoiIsDraft ? 'rgba(217, 200, 255, 0.22)' : 'rgba(106, 56, 208, 0.1)',
-              color: editingPoiIsDraft ? brandColors.ink : brandColors.primaryStrong,
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase',
-            }}
-          >
-            {editingPoiIsDraft ? 'Rascunho local' : 'Sem rascunho pendente'}
-          </span>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              minHeight: 28,
-              padding: '0 10px',
-              borderRadius: 999,
-              background: editingPoiExistsOnBackend ? 'rgba(106, 56, 208, 0.12)' : 'rgba(23, 19, 31, 0.08)',
-              color: editingPoiExistsOnBackend ? brandColors.primaryStrong : brandColors.textMuted,
-              fontSize: 11,
-              fontWeight: 800,
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase',
-            }}
-          >
-            {editingPoiExistsOnBackend ? 'Ja esta no servidor' : 'Ainda nao publicado'}
-          </span>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-          x: {typeof editingPoi.x === 'number' ? Math.round(editingPoi.x) : '-'} | y:{' '}
-          {typeof editingPoi.y === 'number' ? Math.round(editingPoi.y) : '-'} | node:{' '}
-          {freeWalkNavigationEnabled ? 'livre' : editingPoi.nodeId || 'sem conexao'}
-        </div>
-      </div>
+        <h3 style={{ marginTop: 0, marginBottom: '10px', fontSize: '16px' }}>{editingPoi.id ? 'Editar ponto' : 'Novo ponto'}</h3>
 
-      <label className='map-input-label'>Nome</label>
-      <input
-        value={editingPoi.nome || ''}
-        onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), nome: event.target.value }))}
-        style={adminDenseInputStyle}
-        placeholder='Ex: Palco Principal'
-      />
-
-      <label className='map-input-label'>Tipo</label>
-      <select
-        value={editingPoi.tipo || 'atividade'}
-        onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), tipo: event.target.value as PoiType }))}
-        style={adminDenseInputStyle}
-      >
-        <option value='atividade'>Atividade</option>
-        <option value='servico'>Servico</option>
-        <option value='banheiro'>Banheiro</option>
-        <option value='entrada'>Entrada</option>
-      </select>
-
-      <label className='map-input-label'>Descricao</label>
-      <input
-        value={editingPoi.descricao || ''}
-        onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), descricao: event.target.value }))}
-        style={adminDenseInputStyle}
-        placeholder='Informacao curta sobre o ponto'
-      />
-
-      <label className='map-input-label'>URL da foto</label>
-      <input
-        value={editingPoi.imagemUrl || ''}
-        onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), imagemUrl: event.target.value }))}
-        style={adminDenseInputStyle}
-        placeholder='https://...'
-      />
-
-      <label className='map-input-label'>Contato (opcional)</label>
-      <input
-        value={editingPoi.contato || ''}
-        onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), contato: event.target.value }))}
-        style={adminDenseInputStyle}
-        placeholder='Telefone, e-mail ou URL'
-      />
-
-      <label className='map-input-label'>Cor de destaque (opcional)</label>
-      <input
-        value={editingPoi.corDestaque || ''}
-        onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), corDestaque: event.target.value }))}
-        style={adminDenseInputStyle}
-        placeholder={brandColors.primary}
-      />
-      {hasInvalidEditingAccentColor && (
-        <div style={{ marginTop: '-6px', marginBottom: 7, fontSize: 10, color: 'var(--color-primary-strong)' }}>
-          Use apenas cores da paleta: `#6a38d0`, `#4b229f`, `#8d6fe7` ou `#d9c8ff`.
-        </div>
-      )}
-
-      <label className='map-input-label'>Selo do ponto (opcional)</label>
-      <input
-        value={editingPoi.selo || ''}
-        onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), selo: event.target.value }))}
-        style={adminDenseInputStyle}
-        placeholder='Ex: PAL, WC, VIP'
-      />
-
-      <div
-        style={{
-          marginTop: '-2px',
-          marginBottom: 7,
-          padding: '6px 8px',
-          border: '1px dashed #d5dfeb',
-          borderRadius: 10,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          background: '#f7fbff',
-        }}
-      >
-        <span
+        <div
           style={{
-            minWidth: 28,
-            height: 28,
-            padding: '0 7px',
-            borderRadius: 999,
-            background: editingAccentColorPreview,
-            color: '#ffffff',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 800,
-            fontSize: 11,
+            display: 'grid',
+            gap: 8,
+            marginBottom: 10,
+            padding: '8px 10px',
+            borderRadius: 10,
+            background: 'var(--color-surface-soft)',
+            border: '1px solid var(--color-border)',
           }}
         >
-          {editingBadgePreview}
-        </span>
-        <span style={{ fontSize: 11, color: '#4f647d' }}>Previa do destaque visual deste ponto.</span>
-      </div>
-
-      <div style={{ display: 'grid', gap: 10, marginTop: '12px' }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onSaveDraft} style={adminDenseButtonStyle} className='btn btn-neutral'>
-            Salvar rascunho
-          </button>
-          <button onClick={onPublishNow} style={adminDenseButtonStyle} className='btn btn-primary'>
-            Publicar agora
-          </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                minHeight: 28,
+                padding: '0 10px',
+                borderRadius: 999,
+                background: editingPoiIsDraft ? 'rgba(217, 200, 255, 0.22)' : 'rgba(106, 56, 208, 0.1)',
+                color: editingPoiIsDraft ? brandColors.ink : brandColors.primaryStrong,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+            >
+              {editingPoiIsDraft ? 'Rascunho local' : 'Sem rascunho pendente'}
+            </span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                minHeight: 28,
+                padding: '0 10px',
+                borderRadius: 999,
+                background: editingPoiExistsOnBackend ? 'rgba(106, 56, 208, 0.12)' : 'rgba(23, 19, 31, 0.08)',
+                color: editingPoiExistsOnBackend ? brandColors.primaryStrong : brandColors.textMuted,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+            >
+              {editingPoiExistsOnBackend ? 'Ja esta no servidor' : 'Ainda nao publicado'}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+            x: {typeof editingPoi.x === 'number' ? Math.round(editingPoi.x) : '-'} | y:{' '}
+            {typeof editingPoi.y === 'number' ? Math.round(editingPoi.y) : '-'} | node:{' '}
+            {freeWalkNavigationEnabled ? 'livre' : editingPoi.nodeId || 'sem conexao'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-soft)' }}>
+            Clique no mapa, arraste o pin ou ajuste x/y abaixo para acertar a posicao final.
+          </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
-          {editingPoi.id && (
-            <button onClick={() => onRemoveLocal(editingPoi.id!)} style={adminDenseButtonStyle} className='btn btn-neutral'>
-              Remover local
-            </button>
-          )}
-          {editingPoi.id && editingPoiExistsOnBackend && (
-            <button onClick={() => onDeleteFromServer(editingPoi.id!)} style={adminDenseButtonStyle} className='btn btn-danger'>
-              Excluir do servidor
-            </button>
-          )}
+        <label className='map-input-label'>Nome</label>
+        <input
+          value={editingPoi.nome || ''}
+          onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), nome: event.target.value }))}
+          style={adminDenseInputStyle}
+          placeholder='Ex: Palco Principal'
+        />
+
+        <label className='map-input-label'>Tipo</label>
+        <select
+          value={editingPoi.tipo || 'atividade'}
+          onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), tipo: event.target.value as PoiType }))}
+          style={adminDenseInputStyle}
+        >
+          <option value='atividade'>Atividade</option>
+          <option value='servico'>Servico</option>
+          <option value='banheiro'>Banheiro</option>
+          <option value='entrada'>Entrada</option>
+        </select>
+
+        <label className='map-input-label'>Descricao</label>
+        <input
+          value={editingPoi.descricao || ''}
+          onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), descricao: event.target.value }))}
+          style={adminDenseInputStyle}
+          placeholder='Informacao curta sobre o ponto'
+        />
+
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+          <div>
+            <label className='map-input-label'>X</label>
+            <input
+              type='number'
+              min={0}
+              max={mapWidth}
+              step={1}
+              value={typeof editingPoi.x === 'number' ? Math.round(editingPoi.x) : ''}
+              onChange={(event) => {
+                const nextX = Number(event.target.value);
+                if (!Number.isFinite(nextX) || typeof editingPoi.y !== 'number') return;
+                onPositionInputChange(nextX, editingPoi.y);
+              }}
+              style={adminDenseInputStyle}
+              placeholder='0'
+            />
+          </div>
+          <div>
+            <label className='map-input-label'>Y</label>
+            <input
+              type='number'
+              min={0}
+              max={mapHeight}
+              step={1}
+              value={typeof editingPoi.y === 'number' ? Math.round(editingPoi.y) : ''}
+              onChange={(event) => {
+                const nextY = Number(event.target.value);
+                if (!Number.isFinite(nextY) || typeof editingPoi.x !== 'number') return;
+                onPositionInputChange(editingPoi.x, nextY);
+              }}
+              style={adminDenseInputStyle}
+              placeholder='0'
+            />
+          </div>
         </div>
 
-        <button onClick={onClose} style={{ ...adminDenseButtonStyle, width: '100%' }} className='btn btn-neutral'>
-          Fechar
+        <button onClick={onSaveLocation} style={{ ...adminDenseButtonStyle, width: '100%' }} className='btn btn-neutral'>
+          Salvar localizacao
         </button>
+
+        <label className='map-input-label'>Foto do pin</label>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div
+            style={{
+              padding: '10px',
+              borderRadius: 12,
+              border: '1px solid #e6e9ef',
+              background: '#f8f7fc',
+              display: 'grid',
+              gap: 8,
+            }}
+          >
+            {hasSelectedPhoto ? (
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 8,
+                  padding: '8px',
+                  borderRadius: 10,
+                  background: '#ffffff',
+                  border: '1px solid #ebe7f6',
+                }}
+              >
+                <div
+                  style={{
+                    width: '100%',
+                    aspectRatio: '16 / 9',
+                    borderRadius: 10,
+                    overflow: 'hidden',
+                    background: '#efeaf9',
+                    border: '1px solid #e1dbef',
+                  }}
+                >
+                  <img
+                    src={selectedPhotoPreviewUrl ?? editingPoi.imagemUrl}
+                    alt={selectedPhotoOption?.label || editingPoi.nome || 'Preview da foto do pin'}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                </div>
+                <div style={{ fontSize: 11, color: '#5f6c7a', lineHeight: 1.45 }}>
+                  {selectedPhotoOption
+                    ? `Selecionada da fotopins: ${selectedPhotoOption.label}`
+                    : 'Imagem externa selecionada manualmente.'}
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  padding: '10px',
+                  borderRadius: 10,
+                  border: '1px dashed #d7dce6',
+                  color: '#6d7485',
+                  fontSize: 11,
+                  background: '#ffffff',
+                }}
+              >
+                Nenhuma foto vinculada ainda.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {canApplySuggestedPhoto && suggestedPhotoOption && (
+                <button
+                  type='button'
+                  onClick={() => setEditingPoi((current) => ({ ...(current ?? {}), imagemUrl: suggestedPhotoReference ?? '' }))}
+                  style={adminDenseButtonStyle}
+                  className='btn btn-success'
+                >
+                  Usar foto sugerida
+                </button>
+              )}
+              <button
+                type='button'
+                onClick={() => setIsPhotoLibraryOpen(true)}
+                style={adminDenseButtonStyle}
+                className='btn btn-primary'
+              >
+                Escolher da fotopins
+              </button>
+              {hasSelectedPhoto && (
+                <button
+                  type='button'
+                  onClick={() => setEditingPoi((current) => ({ ...(current ?? {}), imagemUrl: '' }))}
+                  style={adminDenseButtonStyle}
+                  className='btn btn-neutral'
+                >
+                  Remover foto
+                </button>
+              )}
+            </div>
+
+            {suggestedPhotoOption && (
+              <div style={{ fontSize: 10, color: '#5f6c7a', lineHeight: 1.45 }}>
+                Sugestao automatica pelo nome do pin: {suggestedPhotoOption.fileName}
+              </div>
+            )}
+
+            <div style={{ fontSize: 10, color: '#6b7280', lineHeight: 1.45 }}>
+              A galeria abaixo usa automaticamente todos os arquivos de `src/assets/fotopins` e salva uma referencia estavel do arquivo no JSON.
+            </div>
+            <div style={{ fontSize: 10, color: '#6b7280', lineHeight: 1.45 }}>
+              Fotopins disponiveis nesta build: {poiPhotoLibrary.length} arquivo(s).
+            </div>
+          </div>
+
+          <input
+            value={editingPoi.imagemUrl || ''}
+            onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), imagemUrl: event.target.value }))}
+            style={adminDenseInputStyle}
+            placeholder='Selecione na galeria ou cole uma URL externa'
+          />
+        </div>
+
+        <label className='map-input-label'>Contato (opcional)</label>
+        <input
+          value={editingPoi.contato || ''}
+          onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), contato: event.target.value }))}
+          style={adminDenseInputStyle}
+          placeholder='Telefone, e-mail ou URL'
+        />
+
+        <label className='map-input-label'>Cor de destaque (opcional)</label>
+        <input
+          value={editingPoi.corDestaque || ''}
+          onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), corDestaque: event.target.value }))}
+          style={adminDenseInputStyle}
+          placeholder={brandColors.primary}
+        />
+        {hasInvalidEditingAccentColor && (
+          <div style={{ marginTop: '-6px', marginBottom: 7, fontSize: 10, color: 'var(--color-primary-strong)' }}>
+            Use apenas cores da paleta: `#6a38d0`, `#4b229f`, `#8d6fe7` ou `#d9c8ff`.
+          </div>
+        )}
+
+        <label className='map-input-label'>Selo do ponto (opcional)</label>
+        <input
+          value={editingPoi.selo || ''}
+          onChange={(event) => setEditingPoi((current) => ({ ...(current ?? {}), selo: event.target.value }))}
+          style={adminDenseInputStyle}
+          placeholder='Ex: PAL, WC, VIP'
+        />
+
+        <div
+          style={{
+            marginTop: '-2px',
+            marginBottom: 7,
+            padding: '6px 8px',
+            border: '1px dashed #d5dfeb',
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: '#f7fbff',
+          }}
+        >
+          <span
+            style={{
+              minWidth: 28,
+              height: 28,
+              padding: '0 7px',
+              borderRadius: 999,
+              background: editingAccentColorPreview,
+              color: '#ffffff',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 800,
+              fontSize: 11,
+            }}
+          >
+            {editingBadgePreview}
+          </span>
+          <span style={{ fontSize: 11, color: '#4f647d' }}>Previa do destaque visual deste ponto.</span>
+        </div>
+
+        <div style={{ display: 'grid', gap: 10, marginTop: '12px' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={onSaveDraft} style={adminDenseButtonStyle} className='btn btn-neutral'>
+              Salvar rascunho
+            </button>
+            <button onClick={onPublishNow} style={adminDenseButtonStyle} className='btn btn-primary'>
+              Publicar agora
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            {editingPoi.id && (
+              <button onClick={() => onRemoveLocal(editingPoi.id!)} style={adminDenseButtonStyle} className='btn btn-neutral'>
+                Remover local
+              </button>
+            )}
+            {editingPoi.id && editingPoiExistsOnBackend && (
+              <button onClick={() => onDeleteFromServer(editingPoi.id!)} style={adminDenseButtonStyle} className='btn btn-danger'>
+                Excluir do servidor
+              </button>
+            )}
+          </div>
+
+          <button onClick={onClose} style={{ ...adminDenseButtonStyle, width: '100%' }} className='btn btn-neutral'>
+            Fechar
+          </button>
+        </div>
       </div>
-    </div>
+
+      {isPhotoLibraryOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 3400,
+            background: 'rgba(19, 17, 25, 0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+          onClick={() => setIsPhotoLibraryOpen(false)}
+        >
+          <div
+            style={{
+              width: 'min(960px, 100%)',
+              maxHeight: '86vh',
+              background: '#ffffff',
+              borderRadius: 18,
+              boxShadow: '0 30px 80px rgba(11, 15, 25, 0.28)',
+              border: '1px solid rgba(214, 222, 235, 0.9)',
+              display: 'grid',
+              gridTemplateRows: 'auto minmax(0, 1fr)',
+              overflow: 'hidden',
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              style={{
+                padding: '16px 18px 12px',
+                borderBottom: '1px solid #edf1f4',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+              }}
+            >
+              <div style={{ display: 'grid', gap: 4 }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#1f1a33' }}>Selecionar foto do pin</div>
+                <div style={{ fontSize: 12, color: '#687385' }}>
+                  Todos os arquivos encontrados em `src/assets/fotopins` aparecem aqui automaticamente.
+                </div>
+              </div>
+              <button
+                type='button'
+                onClick={() => setIsPhotoLibraryOpen(false)}
+                style={{ ...adminDenseButtonStyle, minWidth: 92 }}
+                className='btn btn-neutral'
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 18px 18px', overflowY: 'auto' }}>
+              {poiPhotoLibrary.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+                  {poiPhotoLibrary.map((photo) => {
+                    const isSelected = selectedPhotoOption?.id === photo.id;
+
+                    return (
+                      <button
+                        key={photo.id}
+                        type='button'
+                        onClick={() => {
+                          setEditingPoi((current) => ({ ...(current ?? {}), imagemUrl: getStoredPoiPhotoReference(photo) }));
+                          setIsPhotoLibraryOpen(false);
+                        }}
+                        style={{
+                          border: isSelected ? '2px solid var(--color-primary)' : '1px solid #e7eaf0',
+                          borderRadius: 14,
+                          background: isSelected ? 'rgba(106, 56, 208, 0.06)' : '#ffffff',
+                          padding: 10,
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          display: 'grid',
+                          gap: 8,
+                          boxShadow: isSelected ? '0 14px 30px rgba(106, 56, 208, 0.12)' : 'none',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '100%',
+                            aspectRatio: '1 / 1',
+                            borderRadius: 10,
+                            overflow: 'hidden',
+                            background: '#f4f3f8',
+                            border: '1px solid #ebe7f6',
+                          }}
+                        >
+                          <img
+                            src={photo.url}
+                            alt={photo.label}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                          />
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#23193a', lineHeight: 1.35 }}>{photo.label}</div>
+                        <div style={{ fontSize: 10, color: '#758195', lineHeight: 1.35 }}>{photo.fileName}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: '18px',
+                    borderRadius: 14,
+                    border: '1px dashed #cfd7e3',
+                    color: '#6b7280',
+                    background: '#fafbfc',
+                    fontSize: 12,
+                  }}
+                >
+                  Nenhuma imagem foi encontrada na pasta `src/assets/fotopins`.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };

@@ -1,7 +1,6 @@
 import L from 'leaflet';
 import {
   EVENT_BOUNDARY_IMAGE_POINTS,
-  EVENT_LOCATION_REFERENCE_POINTS,
   MAP_CENTER,
   MAP_OVERLAY_EAST,
   MAP_OVERLAY_NORTH,
@@ -10,78 +9,18 @@ import {
   MAP_PIXEL_HEIGHT,
   MAP_PIXEL_WIDTH,
   OFFICIAL_MAP_DRAG_PADDING_RATIO,
+  ROUTE_LOGICAL_PLACEMENT,
 } from '../../../config/mapConfig';
 import type { ImagePoint } from '../types';
 
 export const MAP_WIDTH = MAP_PIXEL_WIDTH;
 export const MAP_HEIGHT = MAP_PIXEL_HEIGHT;
-export const MANUAL_GPS_OFFSET_STORAGE_KEY = 'gnostart.manualGpsOffset';
-
-export type ManualGpsOffset = {
-  x: number;
-  y: number;
-  latOffset: number;
-  lngOffset: number;
-};
-
-const DEFAULT_MANUAL_GPS_OFFSET: ManualGpsOffset = {
-  x: 0,
-  y: 0,
-  latOffset: 0,
-  lngOffset: 0,
-};
-
-const sanitizeManualGpsOffset = (value: unknown): ManualGpsOffset => {
-  if (!value || typeof value !== 'object') return DEFAULT_MANUAL_GPS_OFFSET;
-
-  const candidate = value as Partial<ManualGpsOffset>;
-  const pickNumber = (input: unknown) => (typeof input === 'number' && Number.isFinite(input) ? input : 0);
-
-  return {
-    x: pickNumber(candidate.x),
-    y: pickNumber(candidate.y),
-    latOffset: pickNumber(candidate.latOffset),
-    lngOffset: pickNumber(candidate.lngOffset),
-  };
-};
-
-export const readManualGpsOffset = (): ManualGpsOffset => {
-  if (typeof window === 'undefined') return DEFAULT_MANUAL_GPS_OFFSET;
-
-  try {
-    const rawValue = window.localStorage.getItem(MANUAL_GPS_OFFSET_STORAGE_KEY);
-    if (!rawValue) return DEFAULT_MANUAL_GPS_OFFSET;
-    return sanitizeManualGpsOffset(JSON.parse(rawValue));
-  } catch {
-    return DEFAULT_MANUAL_GPS_OFFSET;
-  }
-};
-
-export const writeManualGpsOffset = (value: Partial<ManualGpsOffset>) => {
-  if (typeof window === 'undefined') return DEFAULT_MANUAL_GPS_OFFSET;
-
-  const nextOffset = sanitizeManualGpsOffset({
-    ...readManualGpsOffset(),
-    ...value,
-  });
-  window.localStorage.setItem(MANUAL_GPS_OFFSET_STORAGE_KEY, JSON.stringify(nextOffset));
-  return nextOffset;
-};
-
-export const clearManualGpsOffset = () => {
-  if (typeof window === 'undefined') return DEFAULT_MANUAL_GPS_OFFSET;
-  window.localStorage.removeItem(MANUAL_GPS_OFFSET_STORAGE_KEY);
-  return DEFAULT_MANUAL_GPS_OFFSET;
-};
 
 export const mapOverlayBounds = new L.LatLngBounds(
   [MAP_OVERLAY_SOUTH, MAP_OVERLAY_WEST],
   [MAP_OVERLAY_NORTH, MAP_OVERLAY_EAST],
 );
 export const mapViewportBounds = mapOverlayBounds.pad(OFFICIAL_MAP_DRAG_PADDING_RATIO);
-
-const LIVE_LOCATION_REFERENCE_NEIGHBOR_COUNT = 6;
-const LIVE_LOCATION_REFERENCE_MIN_DISTANCE_PX = 18;
 
 export const imageToLatLng = (x: number, y: number): [number, number] => {
   const latSpan = MAP_OVERLAY_NORTH - MAP_OVERLAY_SOUTH;
@@ -90,6 +29,27 @@ export const imageToLatLng = (x: number, y: number): [number, number] => {
   const lng = MAP_OVERLAY_WEST + (x / MAP_WIDTH) * lngSpan;
   return [lat, lng];
 };
+
+const getLogicalMapOverlayImageCorners = () => {
+  const left = ROUTE_LOGICAL_PLACEMENT.offsetX;
+  const top = ROUTE_LOGICAL_PLACEMENT.offsetY;
+  const right = left + MAP_WIDTH * ROUTE_LOGICAL_PLACEMENT.scaleX;
+  const bottom = top + MAP_HEIGHT * ROUTE_LOGICAL_PLACEMENT.scaleY;
+
+  return {
+    left,
+    top,
+    right,
+    bottom,
+  };
+};
+
+export const logicalMapOverlayBounds = (() => {
+  const corners = getLogicalMapOverlayImageCorners();
+  const southWest = imageToLatLng(corners.left, corners.bottom);
+  const northEast = imageToLatLng(corners.right, corners.top);
+  return new L.LatLngBounds(southWest, northEast);
+})();
 
 const projectLatLngToImageBase = (lat: number, lng: number): { x: number; y: number } => {
   const latSpan = MAP_OVERLAY_NORTH - MAP_OVERLAY_SOUTH;
@@ -103,58 +63,6 @@ const projectLatLngToImageBase = (lat: number, lng: number): { x: number; y: num
   };
 };
 
-const liveLocationProjectionResiduals = EVENT_LOCATION_REFERENCE_POINTS.map((point) => {
-  const projected = projectLatLngToImageBase(point.lat, point.lng);
-  return {
-    rawX: projected.x,
-    rawY: projected.y,
-    offsetX: point.x - projected.x,
-    offsetY: point.y - projected.y,
-  };
-});
-
-const getLiveLocationProjectionCorrection = (x: number, y: number) => {
-  const nearestResiduals = [...liveLocationProjectionResiduals]
-    .map((point) => ({
-      ...point,
-      distance: Math.hypot(point.rawX - x, point.rawY - y),
-    }))
-    .sort((left, right) => left.distance - right.distance)
-    .slice(0, LIVE_LOCATION_REFERENCE_NEIGHBOR_COUNT);
-
-  if (nearestResiduals.length === 0) {
-    return { offsetX: 0, offsetY: 0 };
-  }
-
-  if (nearestResiduals[0].distance < 0.0001) {
-    return {
-      offsetX: nearestResiduals[0].offsetX,
-      offsetY: nearestResiduals[0].offsetY,
-    };
-  }
-
-  let weightedOffsetX = 0;
-  let weightedOffsetY = 0;
-  let totalWeight = 0;
-
-  nearestResiduals.forEach((point) => {
-    const normalizedDistance = Math.max(point.distance, LIVE_LOCATION_REFERENCE_MIN_DISTANCE_PX);
-    const weight = 1 / (normalizedDistance * normalizedDistance);
-    weightedOffsetX += point.offsetX * weight;
-    weightedOffsetY += point.offsetY * weight;
-    totalWeight += weight;
-  });
-
-  if (totalWeight <= Number.EPSILON) {
-    return { offsetX: 0, offsetY: 0 };
-  }
-
-  return {
-    offsetX: weightedOffsetX / totalWeight,
-    offsetY: weightedOffsetY / totalWeight,
-  };
-};
-
 const clampImagePointToMap = (point: { x: number; y: number }) => ({
   x: Math.max(0, Math.min(MAP_WIDTH, point.x)),
   y: Math.max(0, Math.min(MAP_HEIGHT, point.y)),
@@ -165,22 +73,7 @@ export const projectLatLngToImageOverlay = (lat: number, lng: number, clampToMap
   return clampToMap ? clampImagePointToMap(basePoint) : basePoint;
 };
 
-export const projectLatLngToImageGps = (lat: number, lng: number, clampToMap = true): { x: number; y: number } => {
-  const manualOffset = readManualGpsOffset();
-  const basePoint = projectLatLngToImageBase(lat + manualOffset.latOffset, lng + manualOffset.lngOffset);
-  const correction = getLiveLocationProjectionCorrection(basePoint.x, basePoint.y);
-  const x = basePoint.x + correction.offsetX + manualOffset.x;
-  const y = basePoint.y + correction.offsetY + manualOffset.y;
-
-  if (!clampToMap) {
-    return { x, y };
-  }
-
-  return clampImagePointToMap({ x, y });
-};
-
 export const latLngToImageOverlay = (lat: number, lng: number) => projectLatLngToImageOverlay(lat, lng, true);
-export const latLngToImageRaw = (lat: number, lng: number) => projectLatLngToImageGps(lat, lng, false);
 export const eventBoundaryLatLngPoints = EVENT_BOUNDARY_IMAGE_POINTS.map((point) => imageToLatLng(point.x, point.y));
 
 export const getImagePointDistance = (from: ImagePoint, to: ImagePoint) => Math.hypot(from.x - to.x, from.y - to.y);
@@ -270,37 +163,6 @@ export const getClosestPointOnPolygonEdges = (point: ImagePoint, polygon: ImageP
   return nearestPoint;
 };
 
-export const formatClockTimeLabel = (timestamp: number) =>
-  new Intl.DateTimeFormat('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(timestamp);
-
-export const mapGeolocationErrorMessage = (error: GeolocationPositionError) => {
-  if (error.code === error.PERMISSION_DENIED) {
-    return 'A permissao de localizacao foi negada. Libere o GPS no navegador para usar a origem automatica.';
-  }
-
-  if (error.code === error.POSITION_UNAVAILABLE) {
-    return 'Nao conseguimos ler sua posicao agora. Confira o GPS do celular e tente novamente.';
-  }
-
-  if (error.code === error.TIMEOUT) {
-    return 'O GPS demorou mais do que o esperado para responder. Tente novamente em um local aberto.';
-  }
-
-  return 'Nao foi possivel iniciar a localizacao em tempo real.';
-};
-
-export const isGeolocationSecureContext = () => {
-  if (typeof window === 'undefined') return false;
-  return window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-};
-
-export const getGeolocationSecureContextMessage = () =>
-  'A localizacao em tempo real exige conexao segura. Abra o mapa pelo dominio oficial com HTTPS para usar o GPS.';
-
 const toRadians = (value: number) => (value * Math.PI) / 180;
 
 export const getLatLngDistanceMeters = (from: [number, number], to: [number, number]) => {
@@ -331,18 +193,6 @@ const MAP_METERS_PER_IMAGE_PIXEL =
 
 export const metersToImagePixels = (meters: number) => meters / MAP_METERS_PER_IMAGE_PIXEL;
 
-export const getLiveLocationBoundaryGraceMeters = (
-  accuracyMeters: number,
-  minMeters: number,
-  maxMeters: number,
-  accuracyFactor: number,
-) =>
-  clampNumber(
-    Math.max(minMeters, accuracyMeters * accuracyFactor),
-    minMeters,
-    maxMeters,
-  );
-
 export const getPathDistanceMeters = (positions: [number, number][]) => {
   if (positions.length < 2) return 0;
   let total = 0;
@@ -358,9 +208,6 @@ export const formatDistanceLabel = (meters: number) => {
   const rounded = Math.max(5, Math.round(meters / 5) * 5);
   return `${rounded} m`;
 };
-
-export const isLiveLocationAccuracyReliable = (accuracyMeters: number, maxAccuracyMeters: number) =>
-  Number.isFinite(accuracyMeters) && accuracyMeters <= maxAccuracyMeters;
 
 export const formatWalkingTimeLabel = (minutes: number) => {
   if (!Number.isFinite(minutes) || minutes <= 0.45) return '< 1 min';

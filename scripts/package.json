@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "jimp": "^0.22.12"
+    "jimp": "^0.22.12",
+    "sharp": "^0.34.5"
   }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
-import { fetchMapBootstrap, type MapPoiDto } from '../../../services/mapApi';
+import { BACKEND_POIS_BOOTSTRAP_ENABLED, fetchMapBootstrap, type MapPoiDto } from '../../../services/mapApi';
 import type { AgendaSessionPoiLinkOverrides, PoiDataSource, PointData } from '../types';
 
 type UseMapBootstrapOptions = {
@@ -42,7 +42,7 @@ export const useMapBootstrap = ({
       try {
         setBackendSyncState('loading');
         const bootstrap = await fetchMapBootstrap();
-        const backendPois = Array.isArray(bootstrap.pois)
+        const backendPois = BACKEND_POIS_BOOTSTRAP_ENABLED && Array.isArray(bootstrap.pois)
           ? sanitizePoiCollection(bootstrap.pois.map(fromApiPoi))
           : [];
         const backendAgendaPoiLinks = sanitizeAgendaPoiLinkRecord(bootstrap.agendaPoiLinks);
@@ -67,7 +67,9 @@ export const useMapBootstrap = ({
         setAdminStatusMessage(
           shouldPreserveWorkspace
             ? 'Servidor sincronizado em segundo plano. Sua edicao local continua ativa para revisao.'
-            : 'Dados do servidor carregados com sucesso.',
+            : BACKEND_POIS_BOOTSTRAP_ENABLED
+              ? 'Dados do servidor carregados com sucesso.'
+              : 'Bootstrap do servidor carregado sem importar POIs. A base local continua ativa.',
         );
       } catch (error) {
         if (!hasLoggedBootstrapFailureRef.current) {

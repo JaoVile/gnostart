@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "build:graph": "node scripts/scanMap.js",
+    "sync:map-base": "node scripts/syncCanonicalMap.js",
+    "build:map-base": "npm run build:graph && npm run sync:map-base",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview --host 0.0.0.0 --port 5173 --strictPort"

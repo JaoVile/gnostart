@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { CircleMarker, Marker, Polyline, Tooltip } from 'react-leaflet';
 import { PoiPopupCard, type PoiPopupAgendaSession } from '../routes-pins-previews/PoiPopupCard';
 import type { PointData, PoiType } from '../types';
+import { resolvePoiPhotoUrl } from './poiPhotos';
 
 export const MapRouteLayer = ({
   routeLatLngPoints,
@@ -37,8 +38,8 @@ export const MapRouteLayer = ({
         positions={visibleRouteLatLngPoints}
         pathOptions={{
           color: routeShadowColor,
-          weight: isMobile ? 15 : 17,
-          opacity: 0.14,
+          weight: isMobile ? 8 : 9,
+          opacity: 0.08,
           lineCap: 'round',
           lineJoin: 'round',
         }}
@@ -47,8 +48,8 @@ export const MapRouteLayer = ({
         positions={visibleRouteLatLngPoints}
         pathOptions={{
           color: surfaceColor,
-          weight: isMobile ? 9 : 10,
-          opacity: 0.94,
+          weight: isMobile ? 5 : 5.6,
+          opacity: 0.96,
           lineCap: 'round',
           lineJoin: 'round',
         }}
@@ -57,7 +58,7 @@ export const MapRouteLayer = ({
         positions={visibleRouteLatLngPoints}
         pathOptions={{
           color: primaryColor,
-          weight: isMobile ? 5.2 : 5.8,
+          weight: isMobile ? 3 : 3.4,
           opacity: 0.98,
           lineCap: 'round',
           lineJoin: 'round',
@@ -67,9 +68,9 @@ export const MapRouteLayer = ({
         positions={visibleRouteLatLngPoints}
         pathOptions={{
           color: routeGuideColor,
-          weight: isMobile ? 2.1 : 2.4,
+          weight: isMobile ? 1.3 : 1.5,
           opacity: 0.86,
-          dashArray: isMobile ? '2 10' : '2 12',
+          dashArray: isMobile ? '2 8' : '2 10',
           lineCap: 'round',
           lineJoin: 'round',
         }}
@@ -78,7 +79,7 @@ export const MapRouteLayer = ({
         <>
           <CircleMarker
             center={routeRevealHeadPoint}
-            radius={isMobile ? 8 : 9}
+            radius={isMobile ? 6 : 7}
             interactive={false}
             pathOptions={{
               stroke: false,
@@ -88,11 +89,11 @@ export const MapRouteLayer = ({
           />
           <CircleMarker
             center={routeRevealHeadPoint}
-            radius={isMobile ? 5 : 5.5}
+            radius={isMobile ? 3.8 : 4.2}
             interactive={false}
             pathOptions={{
               color: surfaceColor,
-              weight: 2.5,
+              weight: 2,
               fillColor: primaryColor,
               fillOpacity: 1,
             }}
@@ -104,26 +105,20 @@ export const MapRouteLayer = ({
 };
 
 export const MapPresenceLayer = ({
-  liveLocation,
-  liveLocationMarkerPosition,
   manualOriginMarkerPosition,
+  manualOriginMarkerLabel,
   routeLatLngPoints,
-  hasLiveLocationFix,
   routeMarkerPosition,
   routeRemainingEtaLabel,
-  liveLocationMarkerTone,
   manualOriginMarkerTone,
   previewMarkerTone,
   renderPresenceMarker,
 }: {
-  liveLocation: { isInsideEvent: boolean; accuracyMeters: number } | null;
-  liveLocationMarkerPosition: [number, number] | null;
   manualOriginMarkerPosition: [number, number] | null;
+  manualOriginMarkerLabel: string;
   routeLatLngPoints: [number, number][];
-  hasLiveLocationFix: boolean;
   routeMarkerPosition: [number, number] | null;
   routeRemainingEtaLabel: string;
-  liveLocationMarkerTone: string;
   manualOriginMarkerTone: string;
   previewMarkerTone: string;
   renderPresenceMarker: (
@@ -132,23 +127,14 @@ export const MapPresenceLayer = ({
   ) => JSX.Element;
 }) => (
   <>
-    {liveLocation &&
-      liveLocationMarkerPosition &&
-      renderPresenceMarker(liveLocationMarkerPosition, {
-        label: liveLocation.isInsideEvent ? 'Voce esta aqui' : 'GPS fora da area do evento',
-        tone: liveLocationMarkerTone,
-        accuracyMeters: liveLocation.accuracyMeters,
-      })}
-
     {manualOriginMarkerPosition &&
       renderPresenceMarker(manualOriginMarkerPosition, {
-        label: 'Origem escolhida no mapa',
+        label: manualOriginMarkerLabel,
         tone: manualOriginMarkerTone,
       })}
 
     {routeLatLngPoints.length > 1 &&
       !manualOriginMarkerPosition &&
-      !hasLiveLocationFix &&
       routeMarkerPosition &&
       renderPresenceMarker(routeMarkerPosition, {
         label: routeRemainingEtaLabel === 'chegando' ? 'Chegando ao destino' : `Chegada em ~${routeRemainingEtaLabel}`,
@@ -160,6 +146,7 @@ export const MapPresenceLayer = ({
 export const MapPoiLayer = ({
   visiblePois,
   activePoiId,
+  selectedOriginId,
   selectedDestinationId,
   isAdmin,
   defaultPoiImages,
@@ -172,6 +159,7 @@ export const MapPoiLayer = ({
   expandedPopupPoiId,
   onToggleExpandedPopup,
   onPopupNavigate,
+  onPopupSetOrigin,
   onMarkerSelect,
   onSuppressNextAdminMapClick,
   onUpdatePoiPosition,
@@ -181,6 +169,7 @@ export const MapPoiLayer = ({
 }: {
   visiblePois: PointData[];
   activePoiId: string | null;
+  selectedOriginId: string;
   selectedDestinationId: string;
   isAdmin: boolean;
   defaultPoiImages: Record<PoiType, string>;
@@ -193,6 +182,7 @@ export const MapPoiLayer = ({
   expandedPopupPoiId: string | null;
   onToggleExpandedPopup: (poiId: string) => void;
   onPopupNavigate: (poi: PointData) => void;
+  onPopupSetOrigin: (poi: PointData) => void;
   onMarkerSelect: (poi: PointData) => void;
   onSuppressNextAdminMapClick: (durationMs?: number) => void;
   onUpdatePoiPosition: (poiId: string, lat: number, lng: number) => void;
@@ -200,6 +190,9 @@ export const MapPoiLayer = ({
     width: number;
     minWidth: number;
     maxWidth: number;
+    maxHeight: number;
+    tier: 'medium' | 'medium-large' | 'large';
+    isMobile: boolean;
   };
   editingPoi: Partial<PointData> | null;
   stateIcons: {
@@ -209,7 +202,9 @@ export const MapPoiLayer = ({
   <>
     {visiblePois.map((poi) => {
       const isActive = poi.id === activePoiId;
-      const popupImage = poi.imagemUrl || defaultPoiImages[poi.tipo];
+      const isOriginSelected = poi.id === selectedOriginId;
+      const isDestinationSelected = poi.id === selectedDestinationId;
+      const popupImage = resolvePoiPhotoUrl(poi.imagemUrl) || defaultPoiImages[poi.tipo];
       const popupAccentColor = getPoiAccentColor(poi);
       const popupGallery = getPoiGalleryImages(poi);
       const popupHeroImage = popupGallery[0] ?? popupImage;
@@ -221,8 +216,8 @@ export const MapPoiLayer = ({
         <Marker
           key={poi.id}
           position={imageToLatLng(poi.x, poi.y)}
-          icon={getMarkerIcon(poi, !isAdmin && (poi.id === selectedDestinationId || isActive))}
-          zIndexOffset={isActive ? 1800 : 1200}
+          icon={getMarkerIcon(poi, !isAdmin && (isDestinationSelected || isOriginSelected || isActive))}
+          zIndexOffset={isActive || isOriginSelected || isDestinationSelected ? 1800 : 1200}
           draggable={isAdmin}
           eventHandlers={{
             click: (event) => {
@@ -266,6 +261,7 @@ export const MapPoiLayer = ({
             isExpanded={isPopupExpanded}
             onToggleExpanded={() => onToggleExpandedPopup(poi.id)}
             onNavigate={() => onPopupNavigate(poi)}
+            onSetAsOrigin={() => onPopupSetOrigin(poi)}
             popupSizePreset={popupSizePreset}
           />
 

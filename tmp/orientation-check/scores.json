@@ -1,0 +1,42 @@
+[
+  {
+    "name": "normal",
+    "logicCount": 1877,
+    "officialCount": 5829,
+    "intersection": 522,
+    "union": 7184,
+    "iou": 0.07266146993318486,
+    "logicCoverage": 0.27810335641981887,
+    "officialCoverage": 0.08955223880597014
+  },
+  {
+    "name": "flipX",
+    "logicCount": 1884,
+    "officialCount": 5829,
+    "intersection": 320,
+    "union": 7393,
+    "iou": 0.04328418774516434,
+    "logicCoverage": 0.16985138004246284,
+    "officialCoverage": 0.054897924172242235
+  },
+  {
+    "name": "flipY",
+    "logicCount": 1858,
+    "officialCount": 5829,
+    "intersection": 0,
+    "union": 7687,
+    "iou": 0,
+    "logicCoverage": 0,
+    "officialCoverage": 0
+  },
+  {
+    "name": "rotate180",
+    "logicCount": 1870,
+    "officialCount": 5829,
+    "intersection": 0,
+    "union": 7699,
+    "iou": 0,
+    "logicCoverage": 0,
+    "officialCoverage": 0
+  }
+]

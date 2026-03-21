@@ -36,6 +36,9 @@ export const useMapDock = ({
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window !== 'undefined' ? window.visualViewport?.height ?? window.innerHeight : 0,
   );
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.visualViewport?.width ?? window.innerWidth : 0,
+  );
   const [isPinsPanelOpen, setIsPinsPanelOpen] = useState(false);
   const [isRoutePanelOpen, setIsRoutePanelOpen] = useState(false);
   const [isAgendaPanelOpen, setIsAgendaPanelOpen] = useState(false);
@@ -213,6 +216,8 @@ export const useMapDock = ({
     const syncViewportHeight = () => {
       const nextHeight = window.visualViewport?.height ?? window.innerHeight;
       setViewportHeight((current) => (Math.abs(current - nextHeight) < 1 ? current : nextHeight));
+      const nextWidth = window.visualViewport?.width ?? window.innerWidth;
+      setViewportWidth((current) => (Math.abs(current - nextWidth) < 1 ? current : nextWidth));
     };
 
     handleMotionPreferenceChange();
@@ -259,6 +264,7 @@ export const useMapDock = ({
     isCompactViewport,
     prefersReducedMotion,
     viewportHeight,
+    viewportWidth,
     isPinsPanelOpen,
     isRoutePanelOpen,
     isAgendaPanelOpen,

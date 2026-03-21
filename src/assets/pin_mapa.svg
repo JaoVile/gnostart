@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="640" viewBox="0 0 512 640" fill="none">
   <defs>
     <linearGradient id="bodyGrad" x1="80" y1="40" x2="430" y2="500" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8F5BCE"/>
-      <stop offset="0.38" stop-color="#6E37A6"/>
-      <stop offset="0.72" stop-color="#4B1F7D"/>
-      <stop offset="1" stop-color="#2E0D5A"/>
+      <stop offset="0" stop-color="#7554A1"/>
+      <stop offset="0.38" stop-color="#5E4184"/>
+      <stop offset="0.72" stop-color="#4A3471"/>
+      <stop offset="1" stop-color="#2C1E44"/>
     </linearGradient>
     <linearGradient id="rimGrad" x1="100" y1="70" x2="370" y2="320" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#F2E9FF"/>
+      <stop offset="0" stop-color="#F4EBFF"/>
       <stop offset="1" stop-color="#CBB3F7"/>
     </linearGradient>
     <linearGradient id="photoRing" x1="150" y1="110" x2="330" y2="280" gradientUnits="userSpaceOnUse">
@@ -16,11 +16,11 @@
       <stop offset="1" stop-color="#D7C0FF"/>
     </linearGradient>
     <linearGradient id="accentGrad" x1="130" y1="120" x2="300" y2="290" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#A87AE3"/>
-      <stop offset="1" stop-color="#5A2397"/>
+      <stop offset="0" stop-color="#D2A3FF"/>
+      <stop offset="1" stop-color="#8F59D8"/>
     </linearGradient>
     <filter id="shadow" x="10" y="10" width="492" height="620" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#21083F" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#181124" flood-opacity="0.28"/>
     </filter>
     <filter id="softGlow" x="72" y="42" width="368" height="420" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feGaussianBlur stdDeviation="10" result="blur"/>
@@ -45,9 +45,9 @@
           fill="url(#bodyGrad)"/>
 
     <!-- subtle map-like contour accent -->
-    <path d="M141 157c29-41 73-69 125-69 52 0 95 21 123 56" stroke="#E9DBFF" stroke-opacity="0.42" stroke-width="12" class="stroke-soft"/>
-    <path d="M132 210c22-19 49-31 79-33 39-3 72 8 103 32" stroke="#D6C0FF" stroke-opacity="0.22" stroke-width="10" class="stroke-soft"/>
-    <path d="M154 328c32 22 65 33 102 33 37 0 72-10 102-31" stroke="#A97BE3" stroke-opacity="0.24" stroke-width="10" class="stroke-soft"/>
+    <path d="M141 157c29-41 73-69 125-69 52 0 95 21 123 56" stroke="#D1C5DF" stroke-opacity="0.42" stroke-width="12" class="stroke-soft"/>
+    <path d="M132 210c22-19 49-31 79-33 39-3 72 8 103 32" stroke="#B2A0C7" stroke-opacity="0.22" stroke-width="10" class="stroke-soft"/>
+    <path d="M154 328c32 22 65 33 102 33 37 0 72-10 102-31" stroke="#8B74A8" stroke-opacity="0.24" stroke-width="10" class="stroke-soft"/>
 
     <!-- top gloss -->
     <path d="M118 199c7-83 67-141 145-150 63-7 118 15 155 65-28-24-66-39-109-39-84 0-154 57-176 124-3 8-12 8-15 0Z"
@@ -61,32 +61,32 @@
     <!-- photo placeholder area -->
     <circle cx="256" cy="220" r="84" fill="white"/>
     <g clip-path="url(#photoClip)">
-      <rect x="172" y="136" width="168" height="168" fill="#F6F2FF"/>
-      <circle cx="256" cy="196" r="28" fill="#D4C2F7"/>
-      <path d="M184 296c10-41 40-67 72-67 33 0 63 26 72 67H184Z" fill="#D4C2F7"/>
-      <path d="M172 272c18-15 33-23 46-23 19 0 29 16 37 16 11 0 19-11 34-11 19 0 35 13 51 29v21H172v-32Z" fill="#E6DBFB"/>
+      <rect x="172" y="136" width="168" height="168" fill="#F8F4FF"/>
+      <circle cx="256" cy="196" r="28" fill="#D0BCEB"/>
+      <path d="M184 296c10-41 40-67 72-67 33 0 63 26 72 67H184Z" fill="#D0BCEB"/>
+      <path d="M172 272c18-15 33-23 46-23 19 0 29 16 37 16 11 0 19-11 34-11 19 0 35 13 51 29v21H172v-32Z" fill="#E4D6FA"/>
     </g>
 
     <!-- dashed ring for photo slot -->
-    <circle cx="256" cy="220" r="72" stroke="#8A58C8" stroke-width="5" stroke-dasharray="10 10" opacity="0.55"/>
+    <circle cx="256" cy="220" r="72" stroke="#5E4184" stroke-width="5" stroke-dasharray="10 10" opacity="0.55"/>
 
     <!-- small location cue -->
     <path d="M256 448c-21 0-38-17-38-38s17-38 38-38 38 17 38 38-17 38-38 38Zm0-20c10 0 18-8 18-18s-8-18-18-18-18 8-18 18 8 18 18 18Z"
-          fill="#F2E9FF" fill-opacity="0.9"/>
+          fill="#F4EBFF" fill-opacity="0.9"/>
     <path d="M256 386c-13.255 0-24 10.745-24 24s10.745 24 24 24 24-10.745 24-24-10.745-24-24-24Zm0 10.5c7.456 0 13.5 6.044 13.5 13.5s-6.044 13.5-13.5 13.5-13.5-6.044-13.5-13.5 6.044-13.5 13.5-13.5Z"
-          fill="#B58AF0" fill-opacity="0.38"/>
+          fill="#D2A3FF" fill-opacity="0.6"/>
 
     <!-- elegant side sparkle accents -->
-    <path d="M132 145l7 16 16 7-16 7-7 16-7-16-16-7 16-7 7-16Z" fill="#EBDFFF" fill-opacity="0.72"/>
-    <path d="M382 121l5 11 11 5-11 5-5 11-5-11-11-5 11-5 5-11Z" fill="#F6F1FF" fill-opacity="0.65"/>
+    <path d="M132 145l7 16 16 7-16 7-7 16-7-16-16-7 16-7 7-16Z" fill="#F1E8FF" fill-opacity="0.72"/>
+    <path d="M382 121l5 11 11 5-11 5-5 11-5-11-11-5 11-5 5-11Z" fill="#F8F4FF" fill-opacity="0.65"/>
   </g>
 
   <!-- soft glow -->
-  <ellipse cx="256" cy="220" rx="120" ry="120" fill="#B389F1" opacity="0.18" filter="url(#softGlow)"/>
+  <ellipse cx="256" cy="220" rx="120" ry="120" fill="#8B74A8" opacity="0.18" filter="url(#softGlow)"/>
 
   <!-- helper label -->
   <g opacity="0.55">
-    <path d="M220 228h72" stroke="#8B5BCA" stroke-width="3.5" stroke-linecap="round"/>
-    <path d="M236 244h40" stroke="#B18BE7" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M220 228h72" stroke="#5E4184" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M236 244h40" stroke="#7554A1" stroke-width="3.5" stroke-linecap="round"/>
   </g>
 </svg>

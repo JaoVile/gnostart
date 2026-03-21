@@ -3,8 +3,7 @@ import {
   CircleMarker,
   ImageOverlay,
   MapContainer,
-  Polygon,
-  TileLayer,
+  Pane,
   Tooltip,
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -18,7 +17,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { findNearestNode } from '../../utils/pathfinding';
+import { findNearestNode, resolveRoutableNodeId } from '../../utils/pathfinding';
 import {
   createPoi,
   deletePoi,
@@ -29,29 +28,19 @@ import {
   type MapPoiDto,
   type UpsertPoiPayload,
 } from '../../services/mapApi';
-import { type LocationContextResponse } from '../../services/locationApi';
-import { MapDockButtons } from './buttons/MapDockButtons';
+import { MapDockButtons } from './allbuttons/MapDockButtons';
 import { MapHeader } from './header/MapHeader';
 import { MapAdminEditor, MapAdminPanel } from './admin/MapAdminPanel';
-import { AgendaPanel } from './agenda/AgendaPanel';
-import { AgendaNotificationStack } from './agenda/AgendaNotificationStack';
-import { useAgendaNotifications } from './agenda/useAgendaNotifications';
-import { LiveLocationCard } from './location/LiveLocationCard';
-import { useLiveLocation } from './location/useLiveLocation';
+import { AgendaPanel } from './allbuttons/cronogram/AgendaPanel';
 import { useMapDock } from './dock/useMapDock';
 import { MapController, MapInteractionEvents, MapSizeSync, MapViewportBoundsController } from './map/MapControllers';
 import { MapPoiLayer, MapPresenceLayer, MapRouteLayer } from './map/MapLayers';
 import {
-  clampNumber,
-  eventBoundaryLatLngPoints,
-  formatClockTimeLabel,
-  getClosestPointOnPolygonEdges,
-  getDistanceToPolygonEdges,
   getImagePointDistance,
   imageToLatLng,
   isPointInsidePolygon,
   latLngToImageOverlay,
-  latLngToImageRaw,
+  logicalMapOverlayBounds,
   mapOverlayBounds,
   mapViewportBounds,
   MAP_HEIGHT,
@@ -59,7 +48,6 @@ import {
 } from './map/mapProjection';
 import {
   BRAND_COLORS,
-  SOFT_PIN_COLORS,
   getPoiAccentColor,
   getPoiBadgeText,
   getPoiIcon,
@@ -69,16 +57,24 @@ import {
   normalizeHexColor,
   stateIcons,
 } from './map/poiVisuals';
+import { getAutoAssignedPoiPhotoReference, getPoiPhotoImage, resolvePoiPhotoUrl } from './map/poiPhotos';
 import { useMapBootstrap } from './map/useMapBootstrap';
-import { PartnersPanel } from './partners/PartnersPanel';
-import { ManualOriginFallbackOverlay } from './routes-pins-previews/ManualOriginFallbackOverlay';
-import { PinPanel } from './routes-pins-previews/PinPanel';
-import { RoutePanel } from './routes-pins-previews/RoutePanel';
-import { useRouteNavigation } from './routes-pins-previews/useRouteNavigation';
-import { usePoiAdmin } from './admin/usePoiAdmin';
+import { PartnersPanel } from './allbuttons/partnership/PartnersPanel';
+import { ManualOriginFallbackOverlay } from './allbuttons/routes/ManualOriginFallbackOverlay';
+import { PinPanel } from './allbuttons/local/PinPanel';
+import { RoutePanel } from './allbuttons/routes/RoutePanel';
+import { useRouteNavigation } from './allbuttons/routes/useRouteNavigation';
 import { MapTutorialOverlay } from './tutorial/MapTutorialOverlay';
-import { tutorialSteps } from './tutorial/tutorialSteps';
+import { usePoiAdmin } from './admin/usePoiAdmin';
+import {
+  CURRENT_MAP_BUILD_REGISTRATION,
+  describeMapBuildRegistrationDifference,
+  formatMapBuildRegistration,
+  isSameMapBuildRegistration,
+  sanitizeMapBuildRegistration,
+} from './admin/buildRegistration';
 import { agendaDays, agendaSessions, compareAgendaSessions, formatAgendaDuration } from './data/agenda';
+import { tutorialSteps } from './tutorial/tutorialSteps';
 import type {
   AdminAgendaPoiLinkSnapshot,
   AdminWorkspaceSnapshot,
@@ -88,10 +84,7 @@ import type {
   DockPanelKey,
   EditingPoi,
   InitialPoiRuntimeState,
-  LiveLocationContextState,
-  LiveLocationSource,
-  LiveLocationState,
-  LiveTrackingState,
+  MapBuildRegistration,
   ManualRouteOrigin,
   PoiAccessCount,
   PoiDataSource,
@@ -114,18 +107,17 @@ import {
   MAP_CENTER,
   MAP_VIEW_CENTER,
   OFFICIAL_MAP_BOUNDS_VISCOSITY,
+  OFFICIAL_MAP_FOREGROUND_SURFACE_URLS,
   OFFICIAL_MAP_SURFACE_URLS,
-  MAP_OVERLAY_EAST,
-  MAP_OVERLAY_NORTH,
-  MAP_OVERLAY_SOUTH,
-  MAP_OVERLAY_WEST,
   getPoiAutoVisibleLimit,
+  getPoiPinSizes,
   getPoiPinScaleTier,
   getPoiPreviewSizeLimits,
   shouldShowPoiPins,
 } from '../../config/mapConfig';
 import rawInitialPoisSeed from '../../data/locaisEventoSocialSeed.json';
 import brandIcon from '../../assets/icone.svg';
+import logicalMapSurfaceUrl from '../../../scripts/logica_nova.png';
 
 const DEFAULT_DOCK_PANEL_HEIGHTS: Record<DockPanelKey, number> = {
   pins: 0.66,
@@ -141,75 +133,19 @@ const MIN_DOCK_PANEL_HEIGHTS: Record<DockPanelKey, number> = {
   partners: 0.42,
 };
 
-const getLiveRouteOriginKey = (location: Pick<LiveLocationState, 'x' | 'y' | 'snappedNodeId'>) => {
-  if (!FREE_WALK_NAVIGATION_ENABLED) {
-    return location.snappedNodeId ?? '';
-  }
-
-  const bucketedX = Math.round(location.x / LIVE_ROUTE_REFRESH_BUCKET_PX) * LIVE_ROUTE_REFRESH_BUCKET_PX;
-  const bucketedY = Math.round(location.y / LIVE_ROUTE_REFRESH_BUCKET_PX) * LIVE_ROUTE_REFRESH_BUCKET_PX;
-  return `${bucketedX}_${bucketedY}`;
-};
-
-const getLiveRouteKey = (destinationId: string, location: Pick<LiveLocationState, 'x' | 'y' | 'snappedNodeId'>) =>
-  `${destinationId}:${getLiveRouteOriginKey(location)}`;
 const ROUTE_REVEAL_MIN_DURATION_MS = 1000;
 const ROUTE_REVEAL_MAX_DURATION_MS = 3000;
 const ROUTE_REVEAL_MS_PER_METER = 11;
-const LIVE_ROUTE_REFRESH_BUCKET_PX = 12;
-const MANUAL_ROUTE_ORIGIN_NODE_MAX_DISTANCE = 110;
 const MANUAL_ROUTE_ORIGIN_POI_MAX_DISTANCE = 120;
-const MANUAL_ROUTE_FALLBACK_TIMEOUT_MS = 1000;
+const MANUAL_ROUTE_FALLBACK_TIMEOUT_MS = 0;
 const PRESENTATION_WALKER_MIN_DURATION_MS = 2500;
 const PRESENTATION_WALKER_MAX_DURATION_MS = 5200;
 const PRESENTATION_WALKER_MS_PER_METER = 16;
 const TAP_FEEDBACK_DURATION_MS = 560;
 const TAP_FEEDBACK_MAX_MOVE_PX = 12;
-const BASEMAP_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const BASEMAP_TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
-// OSM nativo costuma ir ate z19. Acima disso, o Leaflet sobre-amplia os tiles.
-const BASEMAP_TILE_MAX_NATIVE_ZOOM = 19;
-const BASEMAP_TILE_MAX_ZOOM = 30;
 const AVERAGE_WALKING_SPEED_MPS = 1.4;
 const WALKER_PROGRESS_UPDATE_MS = 250;
-
-const canUseBrowserImageLoader = () => typeof window !== 'undefined' && typeof window.Image !== 'undefined';
-const preloadMapSurface = (url: string) =>
-  new Promise<boolean>((resolve) => {
-    if (!canUseBrowserImageLoader()) {
-      resolve(false);
-      return;
-    }
-
-    const image = new window.Image();
-    image.onload = () => resolve(true);
-    image.onerror = () => resolve(false);
-    image.src = url;
-  });
-
-const mapGeolocationErrorMessage = (error: GeolocationPositionError) => {
-  if (error.code === error.PERMISSION_DENIED) {
-    return 'A permissão de localização foi negada. Libere o GPS no navegador para usar a origem automática.';
-  }
-
-  if (error.code === error.POSITION_UNAVAILABLE) {
-    return 'Não conseguimos ler sua posição agora. Confira o GPS do celular e tente novamente.';
-  }
-
-  if (error.code === error.TIMEOUT) {
-    return 'O GPS demorou mais do que o esperado para responder. Tente novamente em um local aberto.';
-  }
-
-  return 'Não foi possível iniciar a localização em tempo real.';
-};
-
-const isGeolocationSecureContext = () => {
-  if (typeof window === 'undefined') return false;
-  return window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-};
-
-const getGeolocationSecureContextMessage = () =>
-  'A localização em tempo real exige conexão segura. Abra o mapa pelo domínio oficial com HTTPS para usar o GPS.';
+const ROUTE_AUTO_EXPIRE_MS = 5 * 60 * 1000;
 
 const toRadians = (value: number) => (value * Math.PI) / 180;
 
@@ -228,24 +164,6 @@ const getLatLngDistanceMeters = (from: [number, number], to: [number, number]) =
   return earthRadius * centralAngle;
 };
 
-const MAP_OVERLAY_WIDTH_METERS = getLatLngDistanceMeters(
-  [MAP_CENTER[0], MAP_OVERLAY_WEST],
-  [MAP_CENTER[0], MAP_OVERLAY_EAST],
-);
-const MAP_OVERLAY_HEIGHT_METERS = getLatLngDistanceMeters(
-  [MAP_OVERLAY_SOUTH, MAP_CENTER[1]],
-  [MAP_OVERLAY_NORTH, MAP_CENTER[1]],
-);
-const MAP_METERS_PER_IMAGE_PIXEL =
-  ((MAP_OVERLAY_WIDTH_METERS / MAP_WIDTH) + (MAP_OVERLAY_HEIGHT_METERS / MAP_HEIGHT)) / 2;
-const metersToImagePixels = (meters: number) => meters / MAP_METERS_PER_IMAGE_PIXEL;
-const getLiveLocationBoundaryGraceMeters = (accuracyMeters: number) =>
-  clampNumber(
-    Math.max(LIVE_LOCATION_BOUNDARY_GRACE_MIN_METERS, accuracyMeters * LIVE_LOCATION_BOUNDARY_ACCURACY_FACTOR),
-    LIVE_LOCATION_BOUNDARY_GRACE_MIN_METERS,
-    LIVE_LOCATION_BOUNDARY_GRACE_MAX_METERS,
-  );
-
 const getPathDistanceMeters = (positions: [number, number][]) => {
   if (positions.length < 2) return 0;
   let total = 0;
@@ -261,9 +179,6 @@ const formatDistanceLabel = (meters: number) => {
   const rounded = Math.max(5, Math.round(meters / 5) * 5);
   return `${rounded} m`;
 };
-
-const isLiveLocationAccuracyReliable = (accuracyMeters: number) =>
-  Number.isFinite(accuracyMeters) && accuracyMeters <= LIVE_LOCATION_MAX_POSITION_ACCURACY_METERS;
 
 const formatWalkingTimeLabel = (minutes: number) => {
   if (!Number.isFinite(minutes) || minutes <= 0.45) return '< 1 min';
@@ -360,44 +275,34 @@ const getPathSliceUntilProgress = (positions: [number, number][], progress: numb
 
   return positions;
 };
-const POI_ACCESS_STORAGE_KEY = 'gnostart.poiAccessCount';
-const POI_RUNTIME_BACKUP_STORAGE_KEY = 'gnostart.poiRuntimeBackup';
-const ADMIN_POI_WORKSPACE_STORAGE_KEY = 'gnostart.adminPoiWorkspace';
-const ADMIN_AGENDA_POI_LINKS_STORAGE_KEY = 'gnostart.adminAgendaPoiLinks';
-const TUTORIAL_STORAGE_KEY = 'gnostart.mapTutorialSeen.v2';
+const POI_ACCESS_STORAGE_KEY = 'gnostart.poiAccessCount.mapaGeral';
+const POI_RUNTIME_BACKUP_STORAGE_KEY = 'gnostart.poiRuntimeBackup.mapaGeral';
+const ADMIN_POI_WORKSPACE_STORAGE_KEY = 'gnostart.adminPoiWorkspace.mapaGeral';
+const ADMIN_AGENDA_POI_LINKS_STORAGE_KEY = 'gnostart.adminAgendaPoiLinks.mapaGeral';
 const MOBILE_MEDIA_QUERY = '(max-width: 900px)';
 const COMPACT_MEDIA_QUERY = '(max-width: 1180px), (max-height: 760px)';
 const PRESENTATION_MODE_QUERY_KEY = 'modo';
 const PRESENTATION_MODE_DEFAULT = true;
-const POI_STORAGE_SCHEMA_VERSION = 6;
+const POI_STORAGE_SCHEMA_VERSION = 10;
 const POI_DATA_EXPORT_FILENAME = 'locais_evento_social.json';
 const EVENT_NAME = 'GNOSTART';
 const EVENT_LABEL = `Evento ${EVENT_NAME}`;
-const REMOVED_POI_IDS = new Set<string>();
+const CURRENT_MAP_BUILD_LABEL = formatMapBuildRegistration(CURRENT_MAP_BUILD_REGISTRATION);
+const REMOVED_POI_IDS = new Set<string>(['laboratorio_game', 'armazem_da_criatividade_1773977448618']);
 const PUBLICLY_HIDDEN_POI_IDS = new Set<string>();
-const LIVE_LOCATION_STORAGE_KEY = 'gnostart.liveLocationSnapshot';
-const LIVE_LOCATION_NODE_MAX_DISTANCE = 150;
-const LIVE_LOCATION_NEAREST_POI_MAX_DISTANCE = 180;
-const LIVE_LOCATION_WARNING_ACCURACY_METERS = 35;
-const LIVE_LOCATION_MAX_POSITION_ACCURACY_METERS = 120;
-const LIVE_LOCATION_RESTORE_MAX_AGE_MS = 25000;
-const LIVE_LOCATION_STALE_RESTART_AFTER_MS = 15000;
-const LIVE_LOCATION_CONTEXT_REFRESH_INTERVAL_MS = 15000;
-const LIVE_LOCATION_CONTEXT_MIN_MOVE_METERS = 12;
-const LIVE_LOCATION_BOUNDARY_GRACE_MIN_METERS = 12;
-const LIVE_LOCATION_BOUNDARY_GRACE_MAX_METERS = 60;
-const LIVE_LOCATION_BOUNDARY_ACCURACY_FACTOR = 0.6;
-const LIVE_LOCATION_REFRESH_INTERVAL_MS = 4000;
-const LIVE_LOCATION_WATCH_OPTIONS: PositionOptions = {
-  enableHighAccuracy: true,
-  maximumAge: 1000,
-  timeout: 10000,
-};
-const LIVE_LOCATION_REFRESH_OPTIONS: PositionOptions = {
-  ...LIVE_LOCATION_WATCH_OPTIONS,
-  maximumAge: 0,
-  timeout: 12000,
-};
+const TUTORIAL_STORAGE_KEY = 'gnostart.mapTutorialSeen.mapaGeral';
+const LEGACY_STORAGE_KEYS_TO_CLEAR = [
+  'gnostart.poiAccessCount',
+  'gnostart.poiRuntimeBackup',
+  'gnostart.adminPoiWorkspace',
+  'gnostart.adminAgendaPoiLinks',
+  'gnostart.mapTutorialSeen.v3',
+  'gnostart.poiAccessCount.logicaNova',
+  'gnostart.poiRuntimeBackup.logicaNova',
+  'gnostart.adminPoiWorkspace.logicaNova',
+  'gnostart.adminAgendaPoiLinks.logicaNova',
+  'gnostart.mapTutorialSeen.logicaNova',
+];
 // Ajuste manual rapido de layout. Troque estes valores para calibrar a interface sem expor botoes no app.
 const BRAND_LOGO_SCALE = 1.2;
 
@@ -434,247 +339,20 @@ const poiTypeSingularLabels: Record<PoiType, string> = {
   entrada: 'Entrada',
 };
 
-const rawInitialPois: PointData[] = [
-  {
-    id: 'entrada_principal',
-    nome: 'Entrada Principal',
-    tipo: 'entrada',
-    x: 747,
-    y: 399,
-    descricao: 'Acesso principal do evento para o publico.',
-    imagemUrl: '/images/pois/indicadores/entrada.svg',
-    corDestaque: SOFT_PIN_COLORS.greenSoft,
-    selo: 'ENT',
-  },
-  {
-    id: 'credenciamento',
-    nome: 'Credenciamento',
-    tipo: 'servico',
-    x: 777,
-    y: 399,
-    descricao: 'Retirada de pulseiras, orientacoes e apoio inicial.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.blueSoft,
-    selo: 'CRD',
-  },
-  {
-    id: 'entrada_caravanas',
-    nome: 'Entrada Caravanas',
-    tipo: 'entrada',
-    x: 713,
-    y: 328,
-    descricao: 'Acesso reservado para grupos e caravanas.',
-    imagemUrl: '/images/pois/indicadores/entrada.svg',
-    corDestaque: SOFT_PIN_COLORS.greenLeaf,
-    selo: 'CAR',
-  },
-  {
-    id: 'palco_principal',
-    nome: 'Palco Principal',
-    tipo: 'atividade',
-    x: 784,
-    y: 342,
-    descricao: 'Area central das palestras e conteudos principais.',
-    imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: SOFT_PIN_COLORS.amberSoft,
-    selo: 'PAL',
-  },
-  {
-    id: 'banheiros',
-    nome: 'Banheiros',
-    tipo: 'banheiro',
-    x: 764,
-    y: 313,
-    descricao: 'Conjunto de banheiros de apoio ao publico.',
-    imagemUrl: '/images/pois/indicadores/banheiro.svg',
-    corDestaque: SOFT_PIN_COLORS.skySoft,
-    selo: 'WC',
-  },
-  {
-    id: 'estande_realidade_virtual',
-    nome: 'Estande Realidade Virtual',
-    tipo: 'atividade',
-    x: 733,
-    y: 330,
-    descricao: 'Espaco de demonstracao e experiencia imersiva.',
-    imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: SOFT_PIN_COLORS.violetSoft,
-    selo: 'ERV',
-  },
-  {
-    id: 'espaco_instagramavel',
-    nome: 'Espaco Instagramavel',
-    tipo: 'atividade',
-    x: 745,
-    y: 326,
-    descricao: 'Cenario visual para fotos e conteudo do evento.',
-    imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: SOFT_PIN_COLORS.periwinkle,
-    selo: 'IGR',
-  },
-  {
-    id: 'area_startups',
-    nome: 'Area das Startups',
-    tipo: 'atividade',
-    x: 797,
-    y: 393,
-    descricao: 'Espaco com as startups participantes do Startup Day.',
-    imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: SOFT_PIN_COLORS.violetDeep,
-    selo: 'STP',
-  },
-  {
-    id: 'barracas_prefeitura',
-    nome: 'Barracas Prefeitura',
-    tipo: 'servico',
-    x: 721,
-    y: 383,
-    descricao: 'Area institucional com os espacos da prefeitura.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.slateSoft,
-    selo: 'PREF',
-  },
-  {
-    id: 'jardim_digital',
-    nome: 'Jardim Digital',
-    tipo: 'servico',
-    x: 733,
-    y: 385,
-    descricao: 'Espaco parceiro voltado a tecnologia e inovacao.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.tealSoft,
-    selo: 'JD',
-  },
-  {
-    id: 'arena_experiencia',
-    nome: 'Arena Experiencia',
-    tipo: 'atividade',
-    x: 700,
-    y: 371,
-    descricao: 'Area continua com os espacos dos parceiros e ativacoes abertas ao publico ao longo do dia.',
-    imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: SOFT_PIN_COLORS.violetSoft,
-    selo: 'ARE',
-  },
-  {
-    id: 'laboratorio_game',
-    nome: 'Laboratório Game',
-    tipo: 'atividade',
-    x: 742,
-    y: 338,
-    descricao: 'Espaco das oficinas GameLab na Arena Porto Digital.',
-    imagemUrl: '/images/pois/indicadores/evento.svg',
-    corDestaque: SOFT_PIN_COLORS.violetSoft,
-    selo: 'GLB',
-  },
-  {
-    id: 'sala_economia_criativa_01',
-    nome: 'Sala de Economia Criativa 01',
-    tipo: 'servico',
-    x: 665,
-    y: 341,
-    descricao: 'Sala reservada para hotseats e encontros do ecossistema.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.blueSoft,
-    selo: 'EC1',
-  },
-  {
-    id: 'sala_economia_criativa_02',
-    nome: 'Sala de Economia Criativa 02',
-    tipo: 'servico',
-    x: 665,
-    y: 367,
-    descricao: 'Sala reservada para hotseats e encontros do ecossistema.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.blueDeep,
-    selo: 'EC2',
-  },
-  {
-    id: 'armazem_da_criatividade_1773977448618',
-    nome: 'Armazem da Criatividade',
-    tipo: 'entrada',
-    x: 813,
-    y: 376,
-    descricao: 'Acesso lateral para o Laboratorio Game e para as salas de Economia Criativa 01 e 02.',
-    imagemUrl: '/images/pois/indicadores/entrada.svg',
-    corDestaque: SOFT_PIN_COLORS.greenSoft,
-    selo: 'ARM',
-  },
-  {
-    id: 'senac',
-    nome: 'SENAC',
-    tipo: 'servico',
-    x: 688,
-    y: 331,
-    descricao: 'Espaco da instituicao parceira SENAC.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.blueSoft,
-    selo: 'SNC',
-  },
-  {
-    id: 'senai',
-    nome: 'SENAI',
-    tipo: 'servico',
-    x: 680,
-    y: 374,
-    descricao: 'Espaco da instituicao parceira SENAI.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.blueDeep,
-    selo: 'SNI',
-  },
-  {
-    id: 'asces',
-    nome: 'ASCES',
-    tipo: 'servico',
-    x: 680,
-    y: 341,
-    descricao: 'Espaco da instituicao parceira ASCES.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.silverSoft,
-    selo: 'ASC',
-  },
-  {
-    id: 'nassau',
-    nome: 'UNINASSAU',
-    tipo: 'servico',
-    x: 698,
-    y: 393,
-    descricao: 'Espaco da instituicao parceira UNINASSAU.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.warmSand,
-    selo: 'NAS',
-  },
-  {
-    id: 'credenciamento_caravanas',
-    nome: 'Credenciamento Caravanas',
-    tipo: 'servico',
-    x: 714,
-    y: 341,
-    descricao: 'Atendimento e credenciamento dedicados aos grupos e caravanas.',
-    imagemUrl: '/images/pois/indicadores/apoio.svg',
-    corDestaque: SOFT_PIN_COLORS.tealSoft,
-    selo: 'CCV',
-  },
-  {
-    id: 'cafeteria_1773957701772',
-    nome: 'CAFETERIA',
-    tipo: 'servico',
-    x: 809,
-    y: 392,
-    imagemUrl: '/images/pois/indicadores/evento.svg',
-  },
-];
-
 const attachNearestNode = (poi: PointData): PointData => {
   if (FREE_WALK_NAVIGATION_ENABLED) return poi;
-  if (poi.nodeId) return poi;
-  const nearestNode = findNearestNode(poi.x, poi.y, 90);
-  return { ...poi, nodeId: nearestNode ?? undefined };
+  const resolvedNodeId = resolveRoutableNodeId(poi.x, poi.y, poi.nodeId ?? null, 120, 120);
+  return { ...poi, nodeId: resolvedNodeId ?? undefined };
 };
 
 const isPoiRemoved = (id: string) => REMOVED_POI_IDS.has(id);
 
-const fromApiPoi = (poi: MapPoiDto): PointData => attachNearestNode(poi);
+const withAutoAssignedPoiPhoto = (poi: PointData): PointData => {
+  const imagemUrl = getAutoAssignedPoiPhotoReference(poi.id, poi.nome, poi.imagemUrl);
+  return imagemUrl && imagemUrl !== poi.imagemUrl ? { ...poi, imagemUrl } : poi;
+};
+
+const fromApiPoi = (poi: MapPoiDto): PointData => attachNearestNode(withAutoAssignedPoiPhoto(poi));
 
 const sanitizePoiCollection = (poiList: PointData[]) => poiList.filter((poi) => !isPoiRemoved(poi.id));
 
@@ -721,49 +399,112 @@ const sanitizeStoredPoi = (value: unknown): PointData | null => {
     return null;
   }
 
-  return attachNearestNode({
-    id: candidate.id,
-    nome: candidate.nome.trim(),
-    tipo: candidate.tipo,
-    x,
-    y,
-    descricao: typeof candidate.descricao === 'string' ? candidate.descricao : undefined,
-    imagemUrl: typeof candidate.imagemUrl === 'string' ? candidate.imagemUrl : undefined,
-    contato: typeof candidate.contato === 'string' ? candidate.contato : undefined,
-    corDestaque: typeof candidate.corDestaque === 'string' ? candidate.corDestaque : undefined,
-    selo: typeof candidate.selo === 'string' ? candidate.selo : undefined,
-    nodeId: typeof candidate.nodeId === 'string' ? candidate.nodeId : undefined,
-  });
+  return attachNearestNode(
+    withAutoAssignedPoiPhoto({
+      id: candidate.id,
+      nome: candidate.nome.trim(),
+      tipo: candidate.tipo,
+      x,
+      y,
+      descricao: typeof candidate.descricao === 'string' ? candidate.descricao : undefined,
+      imagemUrl: typeof candidate.imagemUrl === 'string' ? candidate.imagemUrl : undefined,
+      contato: typeof candidate.contato === 'string' ? candidate.contato : undefined,
+      corDestaque: typeof candidate.corDestaque === 'string' ? candidate.corDestaque : undefined,
+      selo: typeof candidate.selo === 'string' ? candidate.selo : undefined,
+      nodeId: typeof candidate.nodeId === 'string' ? candidate.nodeId : undefined,
+    }),
+  );
 };
 
 const parseStoredPoiList = (value: unknown) =>
   (Array.isArray(value) ? value.map(sanitizeStoredPoi).filter(Boolean) : []) as PointData[];
 
-const getFrontSeedPois = () => {
-  const importedSeedPois = parseStoredPoiList(rawInitialPoisSeed);
-  return importedSeedPois.length > 0 ? importedSeedPois : sanitizePoiCollection(rawInitialPois.map(attachNearestNode));
+const clearLocalStorageKey = (storageKey: string) => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    // Ignora erro de storage para nao interromper o mapa.
+  }
 };
 
-const loadPoiRuntimeBackup = (): PointData[] => {
-  if (typeof window === 'undefined') return [];
+const parseStoredPoiImport = (
+  value: unknown,
+): {
+  pois: PointData[];
+  draftPoiIds: string[];
+  build: MapBuildRegistration | null;
+} => {
+  if (Array.isArray(value)) {
+    return {
+      pois: parseStoredPoiList(value),
+      draftPoiIds: [],
+      build: null,
+    };
+  }
+
+  if (!value || typeof value !== 'object') {
+    return {
+      pois: [],
+      draftPoiIds: [],
+      build: null,
+    };
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const pois = parseStoredPoiList(candidate.pois);
+  const validPoiIds = new Set(pois.map((poi) => poi.id));
+  const draftPoiIds = Array.isArray(candidate.draftPoiIds)
+    ? candidate.draftPoiIds.filter((id): id is string => typeof id === 'string' && validPoiIds.has(id))
+    : [];
+
+  return {
+    pois,
+    draftPoiIds,
+    build: sanitizeMapBuildRegistration(candidate.build),
+  };
+};
+
+const getFrontSeedPois = () => {
+  const importedSeedPois = parseStoredPoiList(rawInitialPoisSeed);
+  return importedSeedPois;
+};
+
+const loadPoiRuntimeBackupSnapshot = (): PoiRuntimeBackupSnapshot | null => {
+  if (typeof window === 'undefined') return null;
 
   try {
     const rawValue = window.localStorage.getItem(POI_RUNTIME_BACKUP_STORAGE_KEY);
-    if (!rawValue) return [];
+    if (!rawValue) return null;
     const parsed = JSON.parse(rawValue) as Partial<PoiRuntimeBackupSnapshot> | PointData[];
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return [];
+      clearLocalStorageKey(POI_RUNTIME_BACKUP_STORAGE_KEY);
+      return null;
     }
 
     if (parsed.version !== POI_STORAGE_SCHEMA_VERSION) {
-      return [];
+      clearLocalStorageKey(POI_RUNTIME_BACKUP_STORAGE_KEY);
+      return null;
     }
 
-    return parseStoredPoiList(parsed.pois);
+    const build = sanitizeMapBuildRegistration(parsed.build);
+    if (!isSameMapBuildRegistration(build, CURRENT_MAP_BUILD_REGISTRATION)) {
+      clearLocalStorageKey(POI_RUNTIME_BACKUP_STORAGE_KEY);
+      return null;
+    }
+
+    return {
+      version: POI_STORAGE_SCHEMA_VERSION,
+      pois: parseStoredPoiList(parsed.pois),
+      build: build ?? undefined,
+    };
   } catch {
-    return [];
+    return null;
   }
 };
+
+const loadPoiRuntimeBackup = (): PointData[] => loadPoiRuntimeBackupSnapshot()?.pois ?? [];
 
 const persistPoiRuntimeBackup = (value: PointData[]) => {
   if (typeof window === 'undefined') return;
@@ -772,6 +513,7 @@ const persistPoiRuntimeBackup = (value: PointData[]) => {
     const snapshot: PoiRuntimeBackupSnapshot = {
       version: POI_STORAGE_SCHEMA_VERSION,
       pois: value,
+      build: CURRENT_MAP_BUILD_REGISTRATION,
     };
     window.localStorage.setItem(POI_RUNTIME_BACKUP_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
@@ -787,9 +529,21 @@ const loadAdminWorkspaceSnapshot = (): AdminWorkspaceSnapshot | null => {
     if (!rawValue) return null;
 
     const parsed = JSON.parse(rawValue) as Partial<AdminWorkspaceSnapshot>;
-    if (parsed.version !== POI_STORAGE_SCHEMA_VERSION) return null;
+    if (parsed.version !== POI_STORAGE_SCHEMA_VERSION) {
+      clearLocalStorageKey(ADMIN_POI_WORKSPACE_STORAGE_KEY);
+      return null;
+    }
     const pois = parseStoredPoiList(parsed?.pois);
-    if (pois.length === 0) return null;
+    if (pois.length === 0) {
+      clearLocalStorageKey(ADMIN_POI_WORKSPACE_STORAGE_KEY);
+      return null;
+    }
+
+    const build = sanitizeMapBuildRegistration(parsed.build);
+    if (!isSameMapBuildRegistration(build, CURRENT_MAP_BUILD_REGISTRATION)) {
+      clearLocalStorageKey(ADMIN_POI_WORKSPACE_STORAGE_KEY);
+      return null;
+    }
 
     const validPoiIds = new Set(pois.map((poi) => poi.id));
     const draftPoiIds = Array.isArray(parsed?.draftPoiIds)
@@ -801,6 +555,7 @@ const loadAdminWorkspaceSnapshot = (): AdminWorkspaceSnapshot | null => {
       pois,
       draftPoiIds,
       updatedAt: typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+      build: build ?? undefined,
     };
   } catch {
     return null;
@@ -816,6 +571,7 @@ const persistAdminWorkspaceSnapshot = (value: Omit<AdminWorkspaceSnapshot, 'vers
       pois: value.pois,
       draftPoiIds: value.draftPoiIds,
       updatedAt: value.updatedAt,
+      build: CURRENT_MAP_BUILD_REGISTRATION,
     };
     window.localStorage.setItem(ADMIN_POI_WORKSPACE_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
@@ -824,13 +580,7 @@ const persistAdminWorkspaceSnapshot = (value: Omit<AdminWorkspaceSnapshot, 'vers
 };
 
 const clearAdminWorkspaceSnapshot = () => {
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.localStorage.removeItem(ADMIN_POI_WORKSPACE_STORAGE_KEY);
-  } catch {
-    // Ignora erro de storage para não interromper o admin.
-  }
+  clearLocalStorageKey(ADMIN_POI_WORKSPACE_STORAGE_KEY);
 };
 
 const sanitizeAgendaPoiLinkRecord = (value: unknown): AgendaSessionPoiLinkOverrides => {
@@ -854,17 +604,22 @@ const loadAdminAgendaPoiLinks = (): AgendaSessionPoiLinkOverrides => {
 
     const parsed = JSON.parse(rawValue) as Partial<AdminAgendaPoiLinkSnapshot> | Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      clearLocalStorageKey(ADMIN_AGENDA_POI_LINKS_STORAGE_KEY);
       return {};
     }
 
     const hasVersionedShape = 'version' in parsed || 'links' in parsed;
     if (hasVersionedShape) {
       const snapshot = parsed as Partial<AdminAgendaPoiLinkSnapshot>;
-      if (snapshot.version !== POI_STORAGE_SCHEMA_VERSION) return {};
+      if (snapshot.version !== POI_STORAGE_SCHEMA_VERSION) {
+        clearLocalStorageKey(ADMIN_AGENDA_POI_LINKS_STORAGE_KEY);
+        return {};
+      }
       return sanitizeAgendaPoiLinkRecord(snapshot.links);
     }
 
-    return sanitizeAgendaPoiLinkRecord(parsed);
+    clearLocalStorageKey(ADMIN_AGENDA_POI_LINKS_STORAGE_KEY);
+    return {};
   } catch {
     return {};
   }
@@ -888,19 +643,26 @@ const persistAdminAgendaPoiLinks = (value: AgendaSessionPoiLinkOverrides) => {
 const getInitialPoiRuntimeState = (): InitialPoiRuntimeState => {
   const workspaceSnapshot = loadAdminWorkspaceSnapshot();
   if (workspaceSnapshot) {
+    const buildWarning = describeMapBuildRegistrationDifference(workspaceSnapshot.build, CURRENT_MAP_BUILD_REGISTRATION);
     return {
       pois: workspaceSnapshot.pois,
       source: 'local-workspace',
       draftPoiIds: workspaceSnapshot.draftPoiIds,
+      buildWarning,
     };
   }
 
-  const runtimeBackup = loadPoiRuntimeBackup();
-  if (runtimeBackup.length > 0) {
+  const runtimeBackupSnapshot = loadPoiRuntimeBackupSnapshot();
+  if (runtimeBackupSnapshot && runtimeBackupSnapshot.pois.length > 0) {
+    const buildWarning = describeMapBuildRegistrationDifference(
+      runtimeBackupSnapshot.build,
+      CURRENT_MAP_BUILD_REGISTRATION,
+    );
     return {
-      pois: runtimeBackup,
+      pois: runtimeBackupSnapshot.pois,
       source: 'local-backup',
       draftPoiIds: [],
+      buildWarning,
     };
   }
 
@@ -908,6 +670,7 @@ const getInitialPoiRuntimeState = (): InitialPoiRuntimeState => {
     pois: getFrontSeedPois(),
     source: 'front-seed',
     draftPoiIds: [],
+    buildWarning: null,
   };
 };
 
@@ -934,84 +697,24 @@ const persistPoiAccessCount = (value: PoiAccessCount) => {
   }
 };
 
-const sanitizeStoredLiveLocation = (value: unknown): LiveLocationState | null => {
-  if (!value || typeof value !== 'object') return null;
-
-  const candidate = value as Record<string, unknown>;
-  const lat = typeof candidate.lat === 'number' ? candidate.lat : Number(candidate.lat);
-  const lng = typeof candidate.lng === 'number' ? candidate.lng : Number(candidate.lng);
-  const x = typeof candidate.x === 'number' ? candidate.x : Number(candidate.x);
-  const y = typeof candidate.y === 'number' ? candidate.y : Number(candidate.y);
-  const accuracyMeters =
-    typeof candidate.accuracyMeters === 'number' ? candidate.accuracyMeters : Number(candidate.accuracyMeters);
-  const capturedAt = typeof candidate.capturedAt === 'number' ? candidate.capturedAt : Number(candidate.capturedAt);
-
-  if (
-    !Number.isFinite(lat) ||
-    !Number.isFinite(lng) ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    !Number.isFinite(accuracyMeters) ||
-    !Number.isFinite(capturedAt)
-  ) {
-    return null;
-  }
-
-  return {
-    lat,
-    lng,
-    x,
-    y,
-    accuracyMeters,
-    capturedAt,
-    isInsideEvent: candidate.isInsideEvent === true,
-    usedBoundaryGrace: candidate.usedBoundaryGrace === true,
-    snappedNodeId: typeof candidate.snappedNodeId === 'string' ? candidate.snappedNodeId : null,
-    nearestPoiId: typeof candidate.nearestPoiId === 'string' ? candidate.nearestPoiId : null,
-  };
-};
-
-const loadPersistedLiveLocation = (): LiveLocationState | null => {
-  if (typeof window === 'undefined') return null;
-
-  try {
-    const rawValue = window.localStorage.getItem(LIVE_LOCATION_STORAGE_KEY);
-    if (!rawValue) return null;
-
-    const parsed = sanitizeStoredLiveLocation(JSON.parse(rawValue));
-    if (!parsed) return null;
-    if (Date.now() - parsed.capturedAt > LIVE_LOCATION_RESTORE_MAX_AGE_MS) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
-const persistLiveLocationSnapshot = (value: LiveLocationState | null) => {
-  if (typeof window === 'undefined') return;
-
-  try {
-    if (!value) {
-      window.localStorage.removeItem(LIVE_LOCATION_STORAGE_KEY);
-      return;
-    }
-
-    window.localStorage.setItem(LIVE_LOCATION_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // Ignora erro de storage para não quebrar a UX.
-  }
-};
-
 const getPoiGalleryImages = (poi: PointData) => {
-  return Array.from(new Set([poi.imagemUrl, defaultPoiImages[poi.tipo]].filter(Boolean) as string[]));
+  return Array.from(
+    new Set(
+      [getPoiPhotoImage(poi.id, poi.nome), resolvePoiPhotoUrl(poi.imagemUrl), defaultPoiImages[poi.tipo]].filter(Boolean) as string[],
+    ),
+  );
 };
 
 const ModaCenterMap = () => {
   const [initialPoiRuntime] = useState(getInitialPoiRuntimeState);
   const [isPresentationMode] = useState(getPresentationModeFromQuery);
-  const [isAdmin, setIsAdmin] = useState(() => !getPresentationModeFromQuery());
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isPinsSummaryOpen, setIsPinsSummaryOpen] = useState(false);
+  const [isLogicalMapCompareOpen, setIsLogicalMapCompareOpen] = useState(false);
+  const [adminPanelPosition, setAdminPanelPosition] = useState({ x: 18, y: 78 });
+  const [isAdminPanelDragging, setIsAdminPanelDragging] = useState(false);
   const [pois, setPois] = useState<PointData[]>(initialPoiRuntime.pois);
-  const [officialMapSurfaceUrl, setOfficialMapSurfaceUrl] = useState<string | null>(null);
+  const [officialMapSurfaceUrls, setOfficialMapSurfaceUrls] = useState<string[]>([]);
   const [serverPois, setServerPois] = useState<PointData[]>([]);
   const [poiDataSource, setPoiDataSource] = useState<PoiDataSource>(initialPoiRuntime.source);
   const [draftPoiIds, setDraftPoiIds] = useState<string[]>(initialPoiRuntime.draftPoiIds);
@@ -1019,9 +722,10 @@ const ModaCenterMap = () => {
   const [adminSearchTerm, setAdminSearchTerm] = useState('');
   const [adminTypeFilter, setAdminTypeFilter] = useState<'todos' | PoiType>('todos');
   const [adminStatusMessage, setAdminStatusMessage] = useState<string | null>(
-    initialPoiRuntime.source === 'local-workspace'
+    initialPoiRuntime.buildWarning ??
+      (initialPoiRuntime.source === 'local-workspace'
       ? 'Edição local carregada. Revise os pontos e publique apenas quando estiver tudo certo.'
-      : null,
+        : null),
   );
   const [adminAgendaPoiLinks, setAdminAgendaPoiLinks] = useState<AgendaSessionPoiLinkOverrides>(loadAdminAgendaPoiLinks);
   const [rota, setRota] = useState<number[][] | null>(null);
@@ -1063,11 +767,15 @@ const ModaCenterMap = () => {
   const [isManualOriginRequired, setIsManualOriginRequired] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  useEffect(() => {
+    LEGACY_STORAGE_KEYS_TO_CLEAR.forEach((storageKey) => clearLocalStorageKey(storageKey));
+  }, []);
   const {
     isMobile,
     isCompactViewport,
     prefersReducedMotion,
     viewportHeight,
+    viewportWidth,
     isPinsPanelOpen,
     isRoutePanelOpen,
     isAgendaPanelOpen,
@@ -1078,7 +786,6 @@ const ModaCenterMap = () => {
     isDockPanelOpen,
     dockSheetBodyRef,
     closeDockPanel,
-    openDockPanel,
     toggleDockPanel,
     handleDockSheetDragPointerDown,
     handleDockSheetDragPointerMove,
@@ -1089,45 +796,21 @@ const ModaCenterMap = () => {
     minDockPanelHeights: MIN_DOCK_PANEL_HEIGHTS,
     mobileMediaQuery: MOBILE_MEDIA_QUERY,
     compactMediaQuery: COMPACT_MEDIA_QUERY,
-    onOpenPanel: () => setIsTutorialOpen(false),
   });
   const [selectedAgendaDay, setSelectedAgendaDay] = useState<AgendaDayId>('21');
   const [favoriteAgendaIds, setFavoriteAgendaIds] = useState<string[]>([]);
   const [routeMessage, setRouteMessage] = useState(
-    'Escolha um destino e deixe o GPS preencher sua origem automaticamente. Para testes, voce tambem pode definir uma origem manual.',
+    'Escolha um destino e confirme onde voce esta para montar a rota pelos corredores do mapa.',
   );
   const [isRouteViewportSettled, setIsRouteViewportSettled] = useState(true);
   const [shouldAnimateRouteReveal, setShouldAnimateRouteReveal] = useState(false);
   const [routeRevealProgress, setRouteRevealProgress] = useState(0);
   const [walkerProgress, setWalkerProgress] = useState(0);
   const [walkerPosition, setWalkerPosition] = useState<[number, number] | null>(null);
-  const [restoredLiveLocation] = useState<LiveLocationState | null>(() => loadPersistedLiveLocation());
-  const [liveTrackingState, setLiveTrackingState] = useState<LiveTrackingState>(() =>
-    restoredLiveLocation ? 'requesting' : 'idle',
-  );
-  const [liveLocation, setLiveLocation] = useState<LiveLocationState | null>(restoredLiveLocation);
-  const [liveLocationMessage, setLiveLocationMessage] = useState<string | null>(() =>
-    restoredLiveLocation ? 'Última posição válida recuperada. Atualizando o GPS em tempo real...' : null,
-  );
-  const [liveLocationSource, setLiveLocationSource] = useState<LiveLocationSource | null>(() =>
-    restoredLiveLocation ? 'gps' : null,
-  );
-  const [liveLocationContext, setLiveLocationContext] = useState<LocationContextResponse | null>(null);
-  const [liveLocationContextState, setLiveLocationContextState] = useState<LiveLocationContextState>('idle');
-  const [liveLocationContextMessage, setLiveLocationContextMessage] = useState<string | null>(null);
   const [tapIndicators, setTapIndicators] = useState<TapIndicator[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const walkerTimerRef = useRef<number | null>(null);
   const routeRevealFrameRef = useRef<number | null>(null);
-  const liveLocationWatchIdRef = useRef<number | null>(null);
-  const liveLocationPollIntervalRef = useRef<number | null>(null);
-  const liveLocationLastSampleAtRef = useRef<number>(restoredLiveLocation?.capturedAt ?? 0);
-  const liveLocationRef = useRef<LiveLocationState | null>(restoredLiveLocation);
-  const liveLocationContextRequestIdRef = useRef(0);
-  const liveLocationContextLastRequestRef = useRef<{ lat: number; lng: number; requestedAt: number } | null>(null);
-  const geolocationPermissionStatusRef = useRef<PermissionStatus | null>(null);
-  const lastLiveRouteKeyRef = useRef('');
-  const lastAnimatedLiveRouteDestinationRef = useRef<string | null>(null);
   const tapIndicatorIdRef = useRef(0);
   const tapIndicatorTimeoutsRef = useRef<number[]>([]);
   const manualOriginFallbackTimerRef = useRef<number | null>(null);
@@ -1135,14 +818,19 @@ const ModaCenterMap = () => {
   const hasLoggedBootstrapFailureRef = useRef(false);
   const suppressAdminMapClickRef = useRef(false);
   const adminMapClickTimeoutRef = useRef<number | null>(null);
+  const adminPanelDragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
   const pointerGestureRef = useRef(new Map<number, { startX: number; startY: number; moved: boolean }>());
-  const hasAutoOpenedPinsLocationPromptRef = useRef(false);
   const lastPanelStateRef = useRef({
     pins: false,
     route: false,
     agenda: false,
     partners: false,
-    tutorial: false,
   });
   const publicPois = useMemo(
     () => pois.filter((poi) => !PUBLICLY_HIDDEN_POI_IDS.has(poi.id)),
@@ -1185,19 +873,14 @@ const ModaCenterMap = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined' || isAdmin) return;
-    if (window.localStorage.getItem(TUTORIAL_STORAGE_KEY) === '1') return;
-
-    const openTutorialOnEntry = window.requestAnimationFrame(() => {
-      closeDockPanel();
-      setTutorialStepIndex(0);
-      setIsTutorialOpen(true);
-    });
-
-    return () => window.cancelAnimationFrame(openTutorialOnEntry);
-  }, [closeDockPanel, isAdmin]);
+    const hasSeenTutorial = window.localStorage.getItem(TUTORIAL_STORAGE_KEY) === '1';
+    if (hasSeenTutorial) return;
+    setTutorialStepIndex(0);
+    setIsTutorialOpen(true);
+  }, [isAdmin]);
 
   const playUiSound = useCallback(
-    (variant: 'tap' | 'panel' | 'route' | 'alert') => {
+    (variant: 'tap' | 'panel' | 'route') => {
       if (typeof window === 'undefined' || isAdmin) return;
       if (!window.AudioContext) return;
 
@@ -1232,14 +915,6 @@ const ModaCenterMap = () => {
           duration: 0.14,
           filter: 1500,
         },
-        alert: {
-          type: 'sine' as OscillatorType,
-          start: 720,
-          end: 620,
-          gain: 0.012,
-          duration: 0.08,
-          filter: 1460,
-        },
       };
 
       const settings = soundMap[variant];
@@ -1268,56 +943,6 @@ const ModaCenterMap = () => {
     },
     [isAdmin],
   );
-
-  const { startLiveLocationTracking, stopLiveLocationTracking } = useLiveLocation({
-    restoredLiveLocation,
-    pois: publicPois,
-    liveTrackingState,
-    setLiveTrackingState,
-    liveLocation,
-    setLiveLocation,
-    setLiveLocationMessage,
-    setLiveLocationSource,
-    setLiveLocationContext,
-    setLiveLocationContextState,
-    setLiveLocationContextMessage,
-    liveLocationWatchIdRef,
-    liveLocationPollIntervalRef,
-    liveLocationLastSampleAtRef,
-    liveLocationRef,
-    liveLocationContextRequestIdRef,
-    liveLocationContextLastRequestRef,
-    geolocationPermissionStatusRef,
-    latLngToImageRaw,
-    eventBoundaryImagePoints: EVENT_BOUNDARY_IMAGE_POINTS,
-    metersToImagePixels,
-    getLiveLocationBoundaryGraceMeters,
-    isPointInsidePolygon,
-    getDistanceToPolygonEdges,
-    getClosestPointOnPolygonEdges,
-    findNearestNodeFn: findNearestNode,
-    getImagePointDistance,
-    isLiveLocationAccuracyReliable,
-    formatDistanceLabel,
-    getLatLngDistanceMeters,
-    persistLiveLocationSnapshot,
-    isGeolocationSecureContext,
-    getGeolocationSecureContextMessage,
-    mapGeolocationErrorMessage,
-    freeWalkNavigationEnabled: FREE_WALK_NAVIGATION_ENABLED,
-    config: {
-      liveLocationNearestPoiMaxDistance: LIVE_LOCATION_NEAREST_POI_MAX_DISTANCE,
-      liveLocationWarningAccuracyMeters: LIVE_LOCATION_WARNING_ACCURACY_METERS,
-      liveLocationBoundaryGraceMaxMeters: LIVE_LOCATION_BOUNDARY_GRACE_MAX_METERS,
-      liveLocationNodeMaxDistance: LIVE_LOCATION_NODE_MAX_DISTANCE,
-      liveLocationRefreshIntervalMs: LIVE_LOCATION_REFRESH_INTERVAL_MS,
-      liveLocationWatchOptions: LIVE_LOCATION_WATCH_OPTIONS,
-      liveLocationRefreshOptions: LIVE_LOCATION_REFRESH_OPTIONS,
-      liveLocationStaleRestartAfterMs: LIVE_LOCATION_STALE_RESTART_AFTER_MS,
-      liveLocationContextRefreshIntervalMs: LIVE_LOCATION_CONTEXT_REFRESH_INTERVAL_MS,
-      liveLocationContextMinMoveMeters: LIVE_LOCATION_CONTEXT_MIN_MOVE_METERS,
-    },
-  });
 
   const spawnTapIndicator = useCallback(
     (x: number, y: number) => {
@@ -1374,8 +999,7 @@ const ModaCenterMap = () => {
       (!previousState.pins && isPinsPanelOpen) ||
       (!previousState.route && isRoutePanelOpen) ||
       (!previousState.agenda && isAgendaPanelOpen) ||
-      (!previousState.partners && isPartnersPanelOpen) ||
-      (!previousState.tutorial && isTutorialOpen);
+      (!previousState.partners && isPartnersPanelOpen);
 
     if (hasPanelOpened) {
       playUiSound('panel');
@@ -1386,9 +1010,8 @@ const ModaCenterMap = () => {
       route: isRoutePanelOpen,
       agenda: isAgendaPanelOpen,
       partners: isPartnersPanelOpen,
-      tutorial: isTutorialOpen,
     };
-  }, [isPinsPanelOpen, isRoutePanelOpen, isAgendaPanelOpen, isPartnersPanelOpen, isTutorialOpen, playUiSound]);
+  }, [isPinsPanelOpen, isRoutePanelOpen, isAgendaPanelOpen, isPartnersPanelOpen, playUiSound]);
 
 
   useEffect(() => {
@@ -1400,16 +1023,6 @@ const ModaCenterMap = () => {
         adminMapClickTimeoutRef.current = null;
       }
 
-      if (liveLocationWatchIdRef.current !== null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-        navigator.geolocation.clearWatch(liveLocationWatchIdRef.current);
-        liveLocationWatchIdRef.current = null;
-      }
-
-      if (liveLocationPollIntervalRef.current !== null) {
-        window.clearInterval(liveLocationPollIntervalRef.current);
-        liveLocationPollIntervalRef.current = null;
-      }
-
       if (routeRevealFrameRef.current !== null) {
         window.cancelAnimationFrame(routeRevealFrameRef.current);
       }
@@ -1419,31 +1032,6 @@ const ModaCenterMap = () => {
       }
     };
   }, []);
-
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (
-      isAdmin ||
-      isTutorialOpen ||
-      liveTrackingState === 'requesting' ||
-      liveTrackingState === 'active' ||
-      hasAutoOpenedPinsLocationPromptRef.current
-    ) {
-      return;
-    }
-
-    hasAutoOpenedPinsLocationPromptRef.current = true;
-    const timeoutId = window.setTimeout(() => {
-      openDockPanel('pins');
-    }, 280);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [isAdmin, isTutorialOpen, liveTrackingState, openDockPanel]);
-
-
-
-
   const legacySyncBootstrap = useCallback(
     async (options?: { forceReplace?: boolean }) => {
       try {
@@ -1509,15 +1097,6 @@ const ModaCenterMap = () => {
 
   const routeShadowColor = mixColors(BRAND_COLORS.ink, BRAND_COLORS.primaryStrong, 0.24);
   const routeGuideColor = mixColors(BRAND_COLORS.highlight, BRAND_COLORS.surface, 0.36);
-  const shouldWarnLiveLocationAccuracy = Boolean(
-    liveLocation && liveLocation.accuracyMeters > LIVE_LOCATION_WARNING_ACCURACY_METERS,
-  );
-  const liveLocationMarkerTone =
-    liveLocation && !liveLocation.isInsideEvent
-      ? mixColors(BRAND_COLORS.ink, BRAND_COLORS.highlight, 0.2)
-      : shouldWarnLiveLocationAccuracy
-        ? mixColors(BRAND_COLORS.highlight, BRAND_COLORS.primaryStrong, 0.28)
-        : BRAND_COLORS.primaryStrong;
   const previewMarkerTone = mixColors(BRAND_COLORS.primaryStrong, BRAND_COLORS.ink, 0.1);
 
   const renderPresenceMarker = (
@@ -1730,28 +1309,13 @@ const ModaCenterMap = () => {
           durationLabel: formatAgendaDuration(session.startTime, session.endTime),
           isFavorite: favoriteAgendaIds.includes(session.id),
           hasLinkedPoi: Boolean(matchedPoi),
-          linkedPoiImage: matchedPoi ? matchedPoi.imagemUrl || defaultPoiImages[matchedPoi.tipo] : null,
+          linkedPoiImage: matchedPoi ? resolvePoiPhotoUrl(matchedPoi.imagemUrl) || defaultPoiImages[matchedPoi.tipo] : null,
           linkedPoiName: matchedPoi?.nome ?? null,
           speakers: session.speakers,
         };
       }),
     [agendaSessionsForSelectedDay, effectiveAdminAgendaPoiLinks, favoriteAgendaIds, pois],
   );
-  const agendaNotificationSessions = useMemo(
-    () =>
-      agendaSessions.map((session) => ({
-        id: session.id,
-        title: session.title,
-        summary: session.summary,
-        venue: session.venue,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        accent: session.accent,
-        hasLinkedPoi: Boolean(resolveAgendaSessionPoi(session, pois, effectiveAdminAgendaPoiLinks)),
-      })),
-    [effectiveAdminAgendaPoiLinks, pois],
-  );
-
   const autoVisiblePois = useMemo(() => {
     return orderedByAccessPois.filter((poi) => enabledTypes[poi.tipo]).slice(0, getPoiAutoVisibleLimit());
   }, [orderedByAccessPois, enabledTypes]);
@@ -1798,67 +1362,49 @@ const ModaCenterMap = () => {
     () => (selectedDestinationId ? pois.find((poi) => poi.id === selectedDestinationId) ?? null : null),
     [selectedDestinationId, pois],
   );
+  const manualOriginNearbyPois = useMemo(() => {
+    const routeReadyPois = publicPois.filter((poi) => poi.id !== selectedDestinationId && (FREE_WALK_NAVIGATION_ENABLED || poi.nodeId));
+    const candidatePois = routeReadyPois.length > 0 ? routeReadyPois : publicPois.filter((poi) => poi.id !== selectedDestinationId);
+
+    if (candidatePois.length === 0) return [];
+
+    const sortedPois = selectedDestinationPoi
+      ? [...candidatePois].sort((left, right) => {
+          const leftDistance = getImagePointDistance(
+            { x: left.x, y: left.y },
+            { x: selectedDestinationPoi.x, y: selectedDestinationPoi.y },
+          );
+          const rightDistance = getImagePointDistance(
+            { x: right.x, y: right.y },
+            { x: selectedDestinationPoi.x, y: selectedDestinationPoi.y },
+          );
+
+          if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+          return left.nome.localeCompare(right.nome);
+        })
+      : [...candidatePois].sort((left, right) => left.nome.localeCompare(right.nome));
+
+    return sortedPois.slice(0, 5).map((poi) => ({
+      id: poi.id,
+      nome: poi.nome,
+      tipoLabel: poiTypeSingularLabels[poi.tipo],
+    }));
+  }, [getImagePointDistance, publicPois, selectedDestinationId, selectedDestinationPoi]);
   const manualMapOriginNearestPoi = useMemo(
     () =>
       manualMapOrigin?.nearestPoiId ? publicPois.find((poi) => poi.id === manualMapOrigin.nearestPoiId) ?? null : null,
     [manualMapOrigin, publicPois],
   );
-  const liveLocationNearestPoi = useMemo(
-    () => (liveLocation?.nearestPoiId ? publicPois.find((poi) => poi.id === liveLocation.nearestPoiId) ?? null : null),
-    [liveLocation, publicPois],
-  );
-  const hasLiveLocationFix = Boolean(
-    liveLocation?.isInsideEvent && (FREE_WALK_NAVIGATION_ENABLED || liveLocation?.snappedNodeId),
-  );
-  const liveLocationMarkerPosition = useMemo<[number, number] | null>(
-    () => (liveLocation ? imageToLatLng(liveLocation.x, liveLocation.y) : null),
-    [liveLocation],
-  );
   const manualMapOriginMarkerPosition = useMemo<[number, number] | null>(
-    () => (manualMapOrigin ? imageToLatLng(manualMapOrigin.x, manualMapOrigin.y) : null),
-    [manualMapOrigin],
+    () =>
+      manualMapOrigin
+        ? imageToLatLng(manualMapOrigin.x, manualMapOrigin.y)
+        : selectedOriginPoi
+          ? imageToLatLng(selectedOriginPoi.x, selectedOriginPoi.y)
+          : null,
+    [manualMapOrigin, selectedOriginPoi],
   );
-  const liveLocationMapPoint = useMemo(() => {
-    if (!liveLocation) return null;
-    return {
-      x: Math.round(liveLocation.x),
-      y: Math.round(liveLocation.y),
-    };
-  }, [liveLocation]);
-  const liveLocationAccuracyLabel = liveLocation ? formatDistanceLabel(liveLocation.accuracyMeters) : null;
-  const liveLocationUpdatedAtLabel = liveLocation ? formatClockTimeLabel(liveLocation.capturedAt) : null;
-  const liveLocationLatLabel = liveLocation ? liveLocation.lat.toFixed(6) : '--';
-  const liveLocationLngLabel = liveLocation ? liveLocation.lng.toFixed(6) : '--';
-  const liveLocationOriginLabel = liveLocationNearestPoi
-    ? `Minha localização perto de ${liveLocationNearestPoi.nome}`
-    : 'Minha localização em tempo real';
-  const liveLocationStatusTone =
-    liveTrackingState === 'active' && hasLiveLocationFix
-      ? BRAND_COLORS.primary
-      : liveTrackingState === 'blocked' || liveTrackingState === 'error'
-        ? BRAND_COLORS.ink
-        : liveTrackingState === 'requesting'
-          ? BRAND_COLORS.highlight
-          : BRAND_COLORS.primarySoft;
-  const liveLocationHeadline =
-    liveTrackingState === 'active' && hasLiveLocationFix
-      ? 'Origem automática ativa'
-      : liveTrackingState === 'requesting'
-        ? 'Buscando sua localização'
-        : liveTrackingState === 'blocked'
-          ? 'Localização bloqueada'
-          : liveTrackingState === 'unsupported'
-            ? 'Geolocalização indisponível'
-            : liveTrackingState === 'error'
-              ? 'Falha no GPS'
-              : 'Ative sua localização';
-  const liveLocationStatusText =
-    liveLocationMessage ??
-    (liveTrackingState === 'idle'
-      ? 'Use o GPS do celular para preencher a origem automaticamente e acompanhar a rota em tempo real.'
-      : 'Aguardando atualizações da sua posição.');
-  const hasConfirmedLiveLocationAccess = liveTrackingState === 'requesting' || liveTrackingState === 'active';
-  const shouldShowPinsLocationPrompt = !isAdmin && !hasConfirmedLiveLocationAccess;
+  const manualOriginMarkerLabel = manualMapOrigin ? 'Origem escolhida no mapa' : 'Voce esta aqui';
   const draftPoiIdSet = useMemo(() => new Set(draftPoiIds), [draftPoiIds]);
   const filteredAdminPois = useMemo(() => {
     const normalizedQuery = normalizeForSearch(adminSearchTerm);
@@ -1906,26 +1452,20 @@ const ModaCenterMap = () => {
   );
   const syncedPoiCount = useMemo(() => pois.length - draftPoiIds.length, [pois.length, draftPoiIds.length]);
 
-  const routeOriginSummaryName = hasLiveLocationFix
-    ? liveLocationOriginLabel
-    : 'Aguardando sua localização exata';
-  const routeOriginSummaryHelp = hasLiveLocationFix
-    ? liveLocation?.usedBoundaryGrace
-      ? `Atualizada automaticamente com ajuste de borda. Última leitura às ${liveLocationUpdatedAtLabel ?? '--'}.`
-      : `Atualizada automaticamente. Última leitura às ${liveLocationUpdatedAtLabel ?? '--'}.`
-    : 'Assim que o GPS fixar sua posição, a origem será usada automaticamente.';
-  const routeMetricLabel = hasLiveLocationFix ? 'Precisão GPS' : 'Progresso';
-  const routeMetricValue = hasLiveLocationFix ? liveLocationAccuracyLabel ?? '--' : `${Math.round(walkerProgress * 100)}%`;
-  const routeMarkerPosition = hasLiveLocationFix ? liveLocationMarkerPosition : walkerPosition;
   const hasPoiManualRouteOrigin = Boolean(selectedOriginPoi);
   const hasManualMapRouteOrigin = Boolean(manualMapOrigin);
   const hasManualRouteOrigin = hasPoiManualRouteOrigin || hasManualMapRouteOrigin;
   const isManualOriginFallbackRequired = isManualOriginRequired && !hasManualRouteOrigin;
+  const routeOriginSummaryName = hasManualRouteOrigin ? 'Origem confirmada' : 'Escolha sua origem';
+  const routeOriginSummaryHelp = hasManualRouteOrigin
+    ? 'Voce pode gerar outra rota, alterar seu local atual ou cancelar a navegacao a qualquer momento.'
+    : 'Escolha um ponto principal ou toque perto de um corredor branco para iniciar a rota.';
+  const routeMarkerPosition = walkerPosition;
   const getManualOriginRequiredMessage = useCallback((destinationName?: string | null) => {
     if (destinationName) {
-      return `A localizacao esta demorando demais para responder. Para ir ate ${destinationName}, toque no mapa onde voce esta ou use os pontos principais no painel de rota.`;
+      return `Para ir ate ${destinationName}, primeiro escolha onde voce esta no mapa ou pelos pontos principais.`;
     }
-    return 'A localizacao esta demorando demais para responder. Toque no mapa onde voce esta ou use os pontos principais no painel de rota.';
+    return 'Primeiro escolha onde voce esta no mapa ou pelos pontos principais para gerar a rota.';
   }, []);
   const activeRouteOriginSummaryName = hasPoiManualRouteOrigin
     ? selectedOriginPoi?.nome ?? 'Origem de teste'
@@ -1937,18 +1477,18 @@ const ModaCenterMap = () => {
         ? 'Confirme onde voce esta'
         : routeOriginSummaryName;
   const activeRouteOriginSummaryHelp = hasPoiManualRouteOrigin
-    ? 'Origem manual de teste ativa. Enquanto ela estiver definida, a rota sera calculada entre pontos do evento.'
+    ? 'Origem escolhida pelos pontos principais. A rota vai sair deste local ate o destino atual.'
     : hasManualMapRouteOrigin
-      ? 'Origem manual no mapa ativa. Se o GPS falhar, toque novamente no mapa para reposicionar sua saida.'
+      ? 'Origem escolhida no mapa. Toque novamente perto de um corredor branco para reposicionar sua saida.'
       : isManualOriginFallbackRequired
         ? getManualOriginRequiredMessage(selectedDestinationPoi?.nome ?? null)
         : routeOriginSummaryHelp;
-  const activeRouteMetricLabel = hasManualRouteOrigin ? 'Modo' : routeMetricLabel;
+  const activeRouteMetricLabel = hasManualRouteOrigin ? 'Modo' : 'Progresso';
   const activeRouteMetricValue = hasPoiManualRouteOrigin
-    ? 'Teste entre pontos'
+    ? 'Ponto principal'
     : hasManualMapRouteOrigin
       ? 'Origem no mapa'
-      : routeMetricValue;
+      : `${Math.round(walkerProgress * 100)}%`;
   const {
     clearManualRouteOrigin,
     clearRoute,
@@ -1975,8 +1515,6 @@ const ModaCenterMap = () => {
     setRouteMessage,
     setWalkerPosition,
     setWalkerProgress,
-    lastLiveRouteKeyRef,
-    lastAnimatedLiveRouteDestinationRef,
     routeRevealFrameRef,
     walkerTimerRef,
     getPoiById,
@@ -1985,14 +1523,18 @@ const ModaCenterMap = () => {
     formatDistanceLabel,
     formatWalkingTimeLabel,
     getImagePointDistance,
-    liveLocation,
-    liveTrackingState,
-    hasLiveLocationFix,
     requireManualOriginConfirmation: isManualOriginFallbackRequired,
-    liveLocationOriginLabel,
-    startLiveLocationTracking,
     onPlayRouteSound: () => playUiSound('route'),
     onNavigateToPoiStart: closeDockPanel,
+    onRequireManualOrigin: (poi) => {
+      closeDockPanel();
+      setExpandedPopupPoiId(null);
+      setActivePoiId(null);
+      setManualOriginPickerMode('fallback');
+      setIsManualOriginPickerOpen(true);
+      setIsManualOriginRequired(true);
+      setRouteMessage(getManualOriginRequiredMessage(poi.nome));
+    },
     routeLatLngPoints,
     routeDistanceMeters,
     isRouteRevealComplete,
@@ -2003,7 +1545,6 @@ const ModaCenterMap = () => {
     getPointAlongPath,
     getAdaptiveAnimationDuration,
     easeInOutCubic,
-    getLiveRouteKey,
     freeWalkNavigationEnabled: FREE_WALK_NAVIGATION_ENABLED,
     config: {
       averageWalkingSpeedMps: AVERAGE_WALKING_SPEED_MPS,
@@ -2014,62 +1555,27 @@ const ModaCenterMap = () => {
       presentationWalkerMaxDurationMs: PRESENTATION_WALKER_MAX_DURATION_MS,
       presentationWalkerMsPerMeter: PRESENTATION_WALKER_MS_PER_METER,
       walkerProgressUpdateMs: WALKER_PROGRESS_UPDATE_MS,
+      routeAutoExpireMs: ROUTE_AUTO_EXPIRE_MS,
     },
   });
-  const liveLocationBackendStateLabel =
-    liveLocationContextState === 'loading'
-      ? 'Validando no backend'
-      : liveLocationContextState === 'error'
-        ? 'Falha na validacao'
-        : liveLocationContext?.provider.googleConfigured
-          ? liveLocationContext.provider.googleUsed
-            ? 'Backend + Google'
-            : 'Backend pronto'
-          : liveLocationContext
-            ? 'Backend local'
-            : 'Aguardando validacao';
-  const liveLocationResolvedAddress =
-    liveLocationContext?.reverseGeocode?.formattedAddress ?? liveLocationContext?.venue?.formattedAddress ?? '--';
-  const liveLocationVenueDistanceLabel =
-    liveLocationContext?.venue?.distanceMeters != null ? formatDistanceLabel(liveLocationContext.venue.distanceMeters) : '--';
-  const liveLocationVenueStatusLabel =
-    liveLocationContext?.venue?.isWithinRadius == null
-      ? liveLocation
-        ? 'Sem validacao de venue'
-        : 'Aguardando GPS'
-      : liveLocationContext.venue.isWithinRadius
-        ? 'Dentro do raio do evento'
-        : 'Fora do raio do evento';
-  const liveLocationExternalRouteLabel = liveLocationContext?.externalRoute
-    ? [
-        liveLocationContext.externalRoute.distanceMeters != null
-          ? formatDistanceLabel(liveLocationContext.externalRoute.distanceMeters)
-          : null,
-        liveLocationContext.externalRoute.durationSeconds != null
-          ? formatWalkingTimeLabel(liveLocationContext.externalRoute.durationSeconds / 60)
-          : null,
-      ]
-        .filter(Boolean)
-        .join(' | ')
-    : liveLocationContext?.venue?.isWithinRadius
-      ? 'Voce ja esta no raio do evento'
-      : '--';
-  const liveLocationContextHelp =
-    liveLocationContextMessage ??
-    liveLocationContext?.warnings?.[0] ??
-    (liveLocationContext?.provider.googleConfigured
-      ? 'O backend pode validar endereco e contexto externo sem mexer na rota interna do evento.'
-      : 'O backend ja esta pronto; basta adicionar a chave do Google para ativar validacao externa e apoio de rota.');
   const selectedDestinationSupportsGuidedRoute = Boolean(
-    selectedDestinationPoi && (FREE_WALK_NAVIGATION_ENABLED || selectedDestinationPoi.nodeId),
+    selectedDestinationPoi &&
+      (FREE_WALK_NAVIGATION_ENABLED ||
+        resolveRoutableNodeId(
+          selectedDestinationPoi.x,
+          selectedDestinationPoi.y,
+          selectedDestinationPoi.nodeId ?? null,
+          120,
+          120,
+        )),
   );
-  const manualOriginOverlayStatusMessage = isManualOriginFallbackRequired || manualMapOrigin ? routeMessage : null;
+  const manualOriginOverlayStatusMessage = manualOriginPickerMode === 'reposition' ? routeMessage : null;
   const openManualOriginPicker = useCallback(
-    (message?: string) => {
+    (mode: 'fallback' | 'reposition' = 'reposition', message?: string) => {
       closeDockPanel();
       setExpandedPopupPoiId(null);
       setActivePoiId(null);
-      setManualOriginPickerMode('reposition');
+      setManualOriginPickerMode(mode);
       setIsManualOriginPickerOpen(true);
       if (message) {
         setRouteMessage(message);
@@ -2077,23 +1583,11 @@ const ModaCenterMap = () => {
     },
     [closeDockPanel],
   );
-  const handleRetryGpsAfterManualFallback = useCallback(() => {
-    setIsManualOriginRequired(false);
-    setIsManualOriginPickerOpen(false);
-    setManualOriginPickerMode(null);
-    setRouteMessage(
-      'Estamos tentando localizar voce novamente pelo GPS. Se demorar, toque no mapa onde voce esta ou use os pontos principais.',
-    );
-    void startLiveLocationTracking();
-  }, [startLiveLocationTracking]);
-  const handleUseMainPointsForRoute = useCallback(() => {
-    setIsManualOriginPickerOpen(false);
-    setManualOriginPickerMode(null);
-    setRouteMessage(
-      'A localizacao esta demorando demais para responder. Escolha sua origem pelos pontos principais para gerar a rota.',
-    );
-    openDockPanel('route');
-  }, [openDockPanel]);
+  const handleChangeRouteOrigin = useCallback(() => {
+    clearManualRouteOrigin();
+    setIsManualOriginRequired(true);
+    openManualOriginPicker('reposition', 'Toque em outro corredor ou perto de um pin para mudar sua origem.');
+  }, [clearManualRouteOrigin, openManualOriginPicker]);
   const handleRouteOriginSuggestionSelect = useCallback(
     (poi: PointData) => {
       setIsManualOriginRequired(false);
@@ -2102,6 +1596,18 @@ const ModaCenterMap = () => {
       selectOriginPoi(poi);
     },
     [selectOriginPoi],
+  );
+  const handleNearbyManualOriginSelect = useCallback(
+    (poiId: string) => {
+      const selectedPoi = publicPois.find((poi) => poi.id === poiId);
+      if (!selectedPoi) return;
+
+      setIsManualOriginRequired(false);
+      setIsManualOriginPickerOpen(false);
+      setManualOriginPickerMode(null);
+      selectOriginPoi(selectedPoi);
+    },
+    [publicPois, selectOriginPoi],
   );
 
   const handlePublicMapClick = useCallback(
@@ -2122,12 +1628,16 @@ const ModaCenterMap = () => {
         }
       }
 
-      const corridorNodeId = findNearestNode(point.x, point.y, MANUAL_ROUTE_ORIGIN_NODE_MAX_DISTANCE);
-      const resolvedNodeId = corridorNodeId ?? nearestPoi?.nodeId ?? null;
-      const isManualOriginAllowed = Boolean(corridorNodeId || nearestPoi);
+      if (!isPointInsidePolygon({ x: point.x, y: point.y }, EVENT_BOUNDARY_IMAGE_POINTS)) {
+        setRouteMessage('Toque dentro da area util do evento para iniciar a rota.');
+        return;
+      }
+
+      const resolvedNodeId = resolveRoutableNodeId(point.x, point.y, nearestPoi?.nodeId ?? null, 120, 60);
+      const isManualOriginAllowed = Boolean(resolvedNodeId || nearestPoi);
 
       if (!isManualOriginAllowed) {
-        setRouteMessage('Marque sua origem apenas sobre um corredor de rota ou bem perto de um pin do mapa.');
+        setRouteMessage('Nao encontramos um corredor valido no mapa para iniciar a rota a partir desse toque.');
         return;
       }
 
@@ -2154,12 +1664,6 @@ const ModaCenterMap = () => {
     }
   }, [manualMapOrigin, selectedDestinationId, selectedDestinationSupportsGuidedRoute, selectedOriginId]);
 
-  const closeTutorial = () => {
-    setIsTutorialOpen(false);
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
-  };
-
   const registerPoiAccess = (poiId: string) => {
     setPoiAccessCount((prev) => ({
       ...prev,
@@ -2185,9 +1689,21 @@ const ModaCenterMap = () => {
 
   const handlePoiListNavigate = (poi: PointData) => {
     focusPoi(poi, true);
-    selectDestinationPoi(poi);
+    navigateToPoi(poi);
     closeDockPanel();
   };
+
+  const handleSetPoiAsCurrentLocation = useCallback(
+    (poi: PointData) => {
+      focusPoi(poi, true, { moveCamera: false });
+      setIsManualOriginRequired(false);
+      setIsManualOriginPickerOpen(false);
+      setManualOriginPickerMode(null);
+      selectOriginPoi(poi);
+      closeDockPanel();
+    },
+    [closeDockPanel, focusPoi, selectOriginPoi],
+  );
 
   const getAgendaSessionPoi = (session: AgendaSession) => {
     return resolveAgendaSessionPoi(session, pois, effectiveAdminAgendaPoiLinks);
@@ -2203,14 +1719,6 @@ const ModaCenterMap = () => {
     const session = agendaSessions.find((item) => item.id === sessionId);
     if (!session) return;
     handleAgendaSessionFocus(session);
-  };
-  const handleAgendaSessionNavigateById = (sessionId: string) => {
-    const session = agendaSessions.find((item) => item.id === sessionId);
-    if (!session) return;
-    const matchedPoi = getAgendaSessionPoi(session);
-    if (!matchedPoi) return;
-    focusPoi(matchedPoi, false, { moveCamera: false });
-    navigateToPoi(matchedPoi);
   };
 
   const toggleAgendaFavorite = (sessionId: string) => {
@@ -2377,7 +1885,7 @@ const ModaCenterMap = () => {
       setAdminStatusMessage(`Ponto ${normalizedPoi.nome} publicado no servidor.`);
     } catch (error) {
       console.error('Falha ao publicar ponto no backend:', error);
-      alert('Não foi possível publicar o ponto no servidor. Confira a API e a ADMIN_API_KEY.');
+      alert('Não foi possível publicar o ponto no servidor.');
       setBackendSyncState('error');
     }
   };
@@ -2524,7 +2032,7 @@ const ModaCenterMap = () => {
       setAdminStatusMessage('Ponto removido do servidor com sucesso.');
     } catch (error) {
       console.error('Falha ao deletar ponto no backend:', error);
-      alert('Não foi possível excluir o ponto no servidor. Confira a API e a ADMIN_API_KEY.');
+      alert('Não foi possível excluir o ponto no servidor.');
     }
   };
 
@@ -2608,6 +2116,9 @@ const ModaCenterMap = () => {
 
   const {
     updatePoiPosition,
+    salvarLocalizacaoAtual,
+    updateEditingPoiCoordinates,
+    handleAdminMapPointPick,
     startNewPoiDraft,
     salvarRascunhoPonto,
     publicarRascunhos,
@@ -2619,6 +2130,8 @@ const ModaCenterMap = () => {
     deletarPonto,
     toggleManualVisibility,
     baixarJson,
+    baixarLogCompleto,
+    copiarLogCompleto,
     handleSetAdminAgendaPoiLink,
     handleResetAdminAgendaPoiLinks,
   } = usePoiAdmin({
@@ -2650,13 +2163,16 @@ const ModaCenterMap = () => {
     mapHeight: MAP_HEIGHT,
     freeWalkNavigationEnabled: FREE_WALK_NAVIGATION_ENABLED,
     findNearestNodeFn: findNearestNode,
-    parseStoredPoiList,
+    parseStoredPoiImport,
     loadPoiRuntimeBackup,
     getFrontSeedPois,
     clearAdminWorkspaceSnapshot,
     sanitizeAgendaPoiLinkRecord,
     fromApiPoi,
     toPoiApiPayload,
+    eventName: EVENT_NAME,
+    exportFileName: POI_DATA_EXPORT_FILENAME,
+    currentMapBuildLabel: CURRENT_MAP_BUILD_LABEL,
   });
   void [
     legacySyncBootstrap,
@@ -2677,32 +2193,7 @@ const ModaCenterMap = () => {
   ];
 
   useEffect(() => {
-    if (!canUseBrowserImageLoader()) {
-      setOfficialMapSurfaceUrl(OFFICIAL_MAP_SURFACE_URLS[OFFICIAL_MAP_SURFACE_URLS.length - 1] ?? null);
-      return;
-    }
-
-    let isCancelled = false;
-
-    const resolveOfficialMapSurface = async () => {
-      for (const url of OFFICIAL_MAP_SURFACE_URLS) {
-        const exists = await preloadMapSurface(url);
-        if (exists) {
-          if (!isCancelled) setOfficialMapSurfaceUrl(url);
-          return;
-        }
-      }
-
-      if (!isCancelled) {
-        setOfficialMapSurfaceUrl(null);
-      }
-    };
-
-    resolveOfficialMapSurface();
-
-    return () => {
-      isCancelled = true;
-    };
+    setOfficialMapSurfaceUrls([...new Set([...OFFICIAL_MAP_SURFACE_URLS, ...OFFICIAL_MAP_FOREGROUND_SURFACE_URLS])]);
   }, []);
 
   useEffect(() => {
@@ -2809,24 +2300,23 @@ const ModaCenterMap = () => {
   }, [activePoiId]);
 
   const poiPinScaleTier = getPoiPinScaleTier(mapZoomLevel, mapZoomRange.min, isMobile);
+  const poiPinSizes = getPoiPinSizes(isMobile);
   const getMarkerIcon = (poi: PointData, isActive: boolean) => {
     if (!isAdmin && poi.id === selectedDestinationId) {
-      return getPoiIcon(poi, poiPinScaleTier, true);
+      return getPoiIcon(poi, poiPinScaleTier, poiPinSizes, true);
     }
     if (!isAdmin && isActive) {
-      return getPoiIcon(poi, poiPinScaleTier, true);
+      return getPoiIcon(poi, poiPinScaleTier, poiPinSizes, true);
     }
-    return getPoiIcon(poi, poiPinScaleTier, false);
+    return getPoiIcon(poi, poiPinScaleTier, poiPinSizes, false);
   };
-  const currentTutorialStep = tutorialSteps[tutorialStepIndex];
-  const isTutorialLocationStep = currentTutorialStep.visual === 'location';
-  const canFinishTutorialLocationStep =
-    !isTutorialLocationStep || hasConfirmedLiveLocationAccess || liveTrackingState === 'unsupported';
   const mapOverlayOpacity = 1;
-  const basemapOpacity = 0;
-  const effectiveMapSurfaceUrl = officialMapSurfaceUrl;
+  const logicalMapOverlayOpacity = isLogicalMapCompareOpen ? 0.78 : isManualOriginPickerOpen ? 0.2 : 0;
+  const logicalMapOverlayClassName = isLogicalMapCompareOpen ? 'map-logic-compare-overlay' : 'map-logic-route-overlay';
+  const logicalMapOverlayZIndex = 20 + officialMapSurfaceUrls.length;
   const resolvedDefaultZoom = 17;
-  const popupSizePreset = getPoiPreviewSizeLimits(isMobile);
+  const popupSizePreset = getPoiPreviewSizeLimits(isMobile, viewportWidth, viewportHeight, poiPinScaleTier);
+  const currentTutorialStep = tutorialSteps[tutorialStepIndex] ?? null;
   const dockWidth = isMobile
     ? '100vw'
     : isCompactViewport
@@ -2835,8 +2325,6 @@ const ModaCenterMap = () => {
   const dockBottom = isMobile ? 0 : 22;
   const activeDockSheetHeight =
     activeDockPanel && viewportHeight > 0 ? Math.round(viewportHeight * dockPanelHeights[activeDockPanel]) : 0;
-  const isCompactAdminLayout = isMobile || isCompactViewport;
-  const adminPanelWidth = isCompactAdminLayout ? 'min(100vw, 340px)' : '300px';
   const adminDenseButtonStyle: CSSProperties = {
     ...actionButton,
     minHeight: 34,
@@ -2892,72 +2380,123 @@ const ModaCenterMap = () => {
       : backendSyncState === 'ready'
         ? 'Servidor sincronizado'
         : 'Servidor indisponível';
-  const isLiveLocationAccuracyWeak = Boolean(
-    liveLocation && liveLocation.accuracyMeters > LIVE_LOCATION_WARNING_ACCURACY_METERS,
-  );
-  const liveLocationPrimaryActionLabel =
-    liveTrackingState === 'requesting'
-      ? 'Buscando GPS'
-      : hasLiveLocationFix
-        ? 'Reiniciar GPS'
-        : 'Usar meu GPS';
-  const shouldShowStopLiveLocation = liveTrackingState !== 'idle' && liveTrackingState !== 'unsupported';
-  const liveLocationSourceLabel = liveLocationSource === 'gps' ? 'Fonte GPS' : 'Sem fonte ativa';
-  const liveLocationCardHeadline = hasManualRouteOrigin
-    ? 'Origem manual ativa'
-    : isManualOriginFallbackRequired
-      ? 'Confirme sua origem'
-      : liveLocationHeadline;
-  const liveLocationCardStatusText = hasManualRouteOrigin
-    ? 'A rota esta usando a origem manual. Limpe a origem quando quiser voltar ao GPS em tempo real.'
-    : isManualOriginFallbackRequired
-      ? 'A localizacao esta demorando demais. Marque onde voce esta no mapa ou use os pontos principais para continuar.'
-      : liveLocationStatusText;
-  const liveLocationCard = (
-    <LiveLocationCard
-      data={{
-        headline: liveLocationCardHeadline,
-        originName: activeRouteOriginSummaryName,
-        statusText: liveLocationCardStatusText,
-        primaryActionLabel: liveLocationPrimaryActionLabel,
-        showStopAction: shouldShowStopLiveLocation,
-        areaLabel: liveLocation ? (liveLocation.isInsideEvent ? 'Dentro da operação' : 'Fora da área') : 'Aguardando GPS',
-        accuracyLabel: liveLocationAccuracyLabel ?? '--',
-        updatedAtLabel: liveLocationUpdatedAtLabel ?? '--',
-        sourceLabel: liveLocationSourceLabel,
-        latLabel: liveLocationLatLabel,
-        lngLabel: liveLocationLngLabel,
-        mapPointLabel: liveLocationMapPoint ? `x:${liveLocationMapPoint.x} | y:${liveLocationMapPoint.y}` : '--',
-        backendStateLabel: liveLocationBackendStateLabel,
-        resolvedAddress: liveLocationResolvedAddress,
-        venueName: liveLocationContext?.venue?.label ?? 'Evento',
-        venueStatusLabel: liveLocationVenueStatusLabel,
-        venueDistanceLabel: liveLocationVenueDistanceLabel,
-        externalRouteLabel: liveLocationExternalRouteLabel,
-        helpText: `${activeRouteOriginSummaryHelp} ${liveLocationContextHelp}${
-          isLiveLocationAccuracyWeak ? ' O sinal está mais fraco do que o ideal; se puder, aproxime-se de uma área aberta.' : ''
-        }`.trim(),
-        tone: liveLocationStatusTone,
-        isAccuracyWeak: isLiveLocationAccuracyWeak,
-      }}
-      onPrimaryAction={startLiveLocationTracking}
-      onStopAction={() => stopLiveLocationTracking()}
-    />
-  );
   const getPoiRelatedSessions = useCallback(
     (poi: PointData) =>
       agendaSessions.filter((session) => sessionMatchesPoi(session, poi, effectiveAdminAgendaPoiLinks)).slice(0, 3),
     [effectiveAdminAgendaPoiLinks],
   );
-  const handleAgendaNotificationSound = useCallback(() => {
-    playUiSound('alert');
-  }, [playUiSound]);
-  const { notifications: agendaNotifications, dismissNotification: dismissAgendaNotification } = useAgendaNotifications({
-    sessions: agendaNotificationSessions,
-    enabled: !isAdmin,
-    onTriggerSound: handleAgendaNotificationSound,
-  });
+  const closeTutorial = useCallback(() => {
+    setIsTutorialOpen(false);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
+    }
+  }, []);
+  const handleNextTutorialStep = useCallback(() => {
+    setTutorialStepIndex((current) => {
+      if (current >= tutorialSteps.length - 1) {
+        closeTutorial();
+        return current;
+      }
 
+      return current + 1;
+    });
+  }, [closeTutorial]);
+  const safeViewportWidth = viewportWidth > 0 ? viewportWidth : 1280;
+  const safeViewportHeight = viewportHeight > 0 ? viewportHeight : 900;
+  const adminPanelFloatingWidth =
+    safeViewportWidth <= 320 ? safeViewportWidth - 12 : Math.min(isCompactViewport ? 360 : 400, safeViewportWidth - 24);
+  const adminPanelFloatingHeight =
+    safeViewportHeight <= 520
+      ? safeViewportHeight - 20
+      : Math.min(Math.round(safeViewportHeight * (isMobile ? 0.9 : 0.84)), safeViewportHeight - 40);
+  const clampAdminPanelPosition = useCallback(
+    (position: { x: number; y: number }) => {
+      const marginX = 12;
+      const minY = 72;
+      const maxX = Math.max(marginX, safeViewportWidth - adminPanelFloatingWidth - marginX);
+      const maxY = Math.max(minY, safeViewportHeight - adminPanelFloatingHeight - 18);
+
+      return {
+        x: Math.min(Math.max(marginX, Math.round(position.x)), maxX),
+        y: Math.min(Math.max(minY, Math.round(position.y)), maxY),
+      };
+    },
+    [adminPanelFloatingHeight, adminPanelFloatingWidth, safeViewportHeight, safeViewportWidth],
+  );
+  const handleCloseAdminMode = useCallback(() => {
+    adminPanelDragStateRef.current = null;
+    setIsAdminPanelDragging(false);
+    setIsPinsSummaryOpen(false);
+    setIsAdmin(false);
+    setEditingPoi(null);
+  }, []);
+  const handleAdminPanelDragPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!isAdmin) return;
+      if (event.button !== 0) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      suppressNextAdminMapClick(240);
+      adminPanelDragStateRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: adminPanelPosition.x,
+        originY: adminPanelPosition.y,
+      };
+      setIsAdminPanelDragging(true);
+    },
+    [adminPanelPosition.x, adminPanelPosition.y, isAdmin, suppressNextAdminMapClick],
+  );
+
+  useEffect(() => {
+    if (!isAdmin) {
+      adminPanelDragStateRef.current = null;
+      setIsAdminPanelDragging(false);
+      setIsPinsSummaryOpen(false);
+      return;
+    }
+
+    setAdminPanelPosition((current) => {
+      const next = clampAdminPanelPosition(current);
+      return current.x === next.x && current.y === next.y ? current : next;
+    });
+  }, [clampAdminPanelPosition, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdminPanelDragging || typeof window === 'undefined') return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const currentDrag = adminPanelDragStateRef.current;
+      if (!currentDrag || currentDrag.pointerId !== event.pointerId) return;
+
+      setAdminPanelPosition(
+        clampAdminPanelPosition({
+          x: currentDrag.originX + (event.clientX - currentDrag.startX),
+          y: currentDrag.originY + (event.clientY - currentDrag.startY),
+        }),
+      );
+    };
+
+    const handlePointerFinish = (event: PointerEvent) => {
+      const currentDrag = adminPanelDragStateRef.current;
+      if (!currentDrag || currentDrag.pointerId !== event.pointerId) return;
+
+      adminPanelDragStateRef.current = null;
+      setIsAdminPanelDragging(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerFinish);
+    window.addEventListener('pointercancel', handlePointerFinish);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerFinish);
+      window.removeEventListener('pointercancel', handlePointerFinish);
+    };
+  }, [clampAdminPanelPosition, isAdminPanelDragging]);
   return (
     <div
       onPointerDownCapture={handleRootPointerDownCapture}
@@ -2974,73 +2513,206 @@ const ModaCenterMap = () => {
         background: 'transparent',
       }}
     >
-      <div
-        style={{
-          position: isCompactAdminLayout ? 'absolute' : 'relative',
-          inset: isCompactAdminLayout ? '0 auto 0 0' : undefined,
-          width: isAdmin ? adminPanelWidth : '0px',
-          maxWidth: '100%',
-          height: isCompactAdminLayout ? '100%' : undefined,
-          maxHeight: isCompactAdminLayout ? '100%' : undefined,
-          transition: 'width 0.3s ease',
-          background: 'var(--color-surface-strong)',
-          borderRight: isAdmin ? '1px solid var(--color-border)' : 'none',
-          display: 'flex',
-          flexDirection: 'column',
-          boxShadow: isAdmin ? '0 6px 20px rgba(106, 56, 208, 0.12)' : 'none',
-          zIndex: 1200,
-          overflow: 'hidden',
-          fontSize: 13,
-        }}
-      >
+      <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
+        {isAdmin && (
+          <button
+            type='button'
+            onClick={() => setIsPinsSummaryOpen((current) => !current)}
+            className='btn btn-neutral'
+            style={{
+              ...adminDenseButtonStyle,
+              position: 'fixed',
+              top: 16,
+              left: 16,
+              zIndex: 3400,
+              minWidth: 184,
+              minHeight: 42,
+              padding: '10px 14px',
+              borderRadius: 14,
+              boxShadow: '0 18px 38px rgba(15, 23, 42, 0.18)',
+              backdropFilter: 'blur(12px)',
+              background: 'rgba(255, 255, 255, 0.94)',
+              border: '1px solid rgba(196, 207, 222, 0.95)',
+            }}
+          >
+            {isPinsSummaryOpen ? 'Fechar lista dos pins' : 'Ver lista dos pins'}
+          </button>
+        )}
 
         {isAdmin && (
-          <MapAdminPanel
-            adminImportInputRef={adminImportInputRef}
-            onImportFileChange={handleAdminImportFileChange}
-            freeWalkNavigationEnabled={FREE_WALK_NAVIGATION_ENABLED}
-            currentSourceMeta={currentSourceMeta}
-            backendSyncLabel={backendSyncLabel}
-            poisCount={pois.length}
-            draftPoiCount={draftPoiIds.length}
-            syncedPoiCount={syncedPoiCount}
-            disconnectedPoiCount={disconnectedPoiCount}
-            onStartNewPoiDraft={startNewPoiDraft}
-            onRefreshServer={() => void syncBootstrap({ forceReplace: true })}
-            onOpenJsonImporter={abrirImportadorJson}
-            onPublishDrafts={publicarRascunhos}
-            adminDenseButtonStyle={adminDenseButtonStyle}
-            adminDenseInputStyle={adminDenseInputStyle}
-            adminSearchTerm={adminSearchTerm}
-            onAdminSearchTermChange={setAdminSearchTerm}
-            adminTypeFilter={adminTypeFilter}
-            onAdminTypeFilterChange={setAdminTypeFilter}
-            adminStatusMessage={adminStatusMessage}
-            adminAgendaPoiLinks={adminAgendaPoiLinkRows}
-            adminAgendaPoiLinkOptions={adminAgendaPoiLinkOptions}
-            onSetAgendaPoiLink={handleSetAdminAgendaPoiLink}
-            onResetAgendaPoiLinks={handleResetAdminAgendaPoiLinks}
-            filteredAdminPois={filteredAdminPois}
-            draftPoiIdSet={draftPoiIdSet}
-            editingPoiId={editingPoi?.id ?? null}
-            getPoiAccentColor={getPoiAccentColor}
-            getPoiBadgeText={getPoiBadgeText}
-            onSelectPoi={(poi) => {
-              setEditingPoi({ ...poi });
-              setFocusPoint(poi);
-              setActivePoiId(poi.id);
+          <button
+            type='button'
+            onClick={() => setIsLogicalMapCompareOpen((current) => !current)}
+            className='btn btn-neutral'
+            style={{
+              ...adminDenseButtonStyle,
+              position: 'fixed',
+              top: 68,
+              left: 16,
+              zIndex: 3400,
+              minWidth: 208,
+              minHeight: 42,
+              padding: '10px 14px',
+              borderRadius: 14,
+              boxShadow: '0 18px 38px rgba(15, 23, 42, 0.18)',
+              backdropFilter: 'blur(12px)',
+              background: isLogicalMapCompareOpen ? 'rgba(92, 51, 173, 0.92)' : 'rgba(255, 255, 255, 0.94)',
+              color: isLogicalMapCompareOpen ? '#ffffff' : undefined,
+              border: isLogicalMapCompareOpen
+                ? '1px solid rgba(92, 51, 173, 0.98)'
+                : '1px solid rgba(196, 207, 222, 0.95)',
             }}
-            onRestorePrimarySource={restaurarFontePrincipal}
-            onDownloadJson={baixarJson}
-            onExitAdmin={() => {
-              setIsAdmin(false);
-              setEditingPoi(null);
-            }}
-          />
+          >
+            {isLogicalMapCompareOpen ? 'Fechar comparacao logica' : 'Comparar logica com oficial'}
+          </button>
         )}
-      </div>
 
-      <div style={{ flex: 1, position: 'relative', zIndex: 1 }}>
+        {isAdmin && isLogicalMapCompareOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 120,
+              left: 16,
+              zIndex: 3400,
+              maxWidth: 280,
+              padding: '10px 12px',
+              borderRadius: 14,
+              background: 'rgba(31, 20, 58, 0.88)',
+              color: '#ffffff',
+              border: '1px solid rgba(255, 255, 255, 0.16)',
+              boxShadow: '0 16px 32px rgba(15, 23, 42, 0.24)',
+              backdropFilter: 'blur(12px)',
+              fontSize: 12,
+              lineHeight: 1.35,
+            }}
+          >
+            Base de rota: `logica_nova.png`
+            <br />
+            Base visual: `mapa_geral.svg`
+          </div>
+        )}
+
+        {isAdmin && (
+          <div
+            style={{
+              position: 'absolute',
+              left: adminPanelPosition.x,
+              top: adminPanelPosition.y,
+              width: adminPanelFloatingWidth,
+              height: adminPanelFloatingHeight,
+              maxWidth: 'calc(100% - 24px)',
+              display: 'flex',
+              flexDirection: 'column',
+              borderRadius: 24,
+              overflow: 'hidden',
+              background: 'rgba(255, 255, 255, 0.92)',
+              border: '1px solid rgba(205, 214, 228, 0.96)',
+              boxShadow: '0 30px 80px rgba(17, 24, 39, 0.24)',
+              backdropFilter: 'blur(16px)',
+              zIndex: 2100,
+              fontSize: 13,
+            }}
+            className='map-floating-panel'
+          >
+            <div
+              onPointerDown={handleAdminPanelDragPointerDown}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: '14px 16px',
+                background: 'linear-gradient(135deg, rgba(20, 25, 40, 0.96), rgba(51, 36, 99, 0.92))',
+                color: '#ffffff',
+                cursor: isAdminPanelDragging ? 'grabbing' : 'grab',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                userSelect: 'none',
+                touchAction: 'none',
+              }}
+            >
+              <div style={{ display: 'grid', gap: 3 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '0.01em' }}>Painel admin</div>
+                <div style={{ fontSize: 11, opacity: 0.78 }}>
+                  Arraste esta barra para reposicionar e revisar os pins com mais conforto.
+                </div>
+              </div>
+              <div
+                aria-hidden='true'
+                style={{
+                  width: 42,
+                  height: 28,
+                  borderRadius: 999,
+                  background: 'rgba(255, 255, 255, 0.14)',
+                  border: '1px solid rgba(255, 255, 255, 0.18)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  letterSpacing: '0.12em',
+                  fontSize: 12,
+                  fontWeight: 800,
+                }}
+              >
+                ::
+              </div>
+            </div>
+
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                background: 'linear-gradient(180deg, rgba(250, 252, 255, 0.98), rgba(244, 247, 252, 0.96))',
+              }}
+            >
+              <MapAdminPanel
+                adminImportInputRef={adminImportInputRef}
+                onImportFileChange={handleAdminImportFileChange}
+                isPinsSummaryOpen={isPinsSummaryOpen}
+                onClosePinsSummary={() => setIsPinsSummaryOpen(false)}
+                freeWalkNavigationEnabled={FREE_WALK_NAVIGATION_ENABLED}
+                currentSourceMeta={currentSourceMeta}
+                currentMapBuildLabel={CURRENT_MAP_BUILD_LABEL}
+                backendSyncLabel={backendSyncLabel}
+                poisCount={pois.length}
+                draftPoiCount={draftPoiIds.length}
+                syncedPoiCount={syncedPoiCount}
+                disconnectedPoiCount={disconnectedPoiCount}
+                onStartNewPoiDraft={startNewPoiDraft}
+                onRefreshServer={() => void syncBootstrap({ forceReplace: true })}
+                onOpenJsonImporter={abrirImportadorJson}
+                onPublishDrafts={publicarRascunhos}
+                adminDenseButtonStyle={adminDenseButtonStyle}
+                adminDenseInputStyle={adminDenseInputStyle}
+                adminSearchTerm={adminSearchTerm}
+                onAdminSearchTermChange={setAdminSearchTerm}
+                adminTypeFilter={adminTypeFilter}
+                onAdminTypeFilterChange={setAdminTypeFilter}
+                adminStatusMessage={adminStatusMessage}
+                adminAgendaPoiLinks={adminAgendaPoiLinkRows}
+                adminAgendaPoiLinkOptions={adminAgendaPoiLinkOptions}
+                onSetAgendaPoiLink={handleSetAdminAgendaPoiLink}
+                onResetAgendaPoiLinks={handleResetAdminAgendaPoiLinks}
+                allAdminPois={pois}
+                filteredAdminPois={filteredAdminPois}
+                draftPoiIdSet={draftPoiIdSet}
+                editingPoiId={editingPoi?.id ?? null}
+                getPoiAccentColor={getPoiAccentColor}
+                getPoiBadgeText={getPoiBadgeText}
+                onSelectPoi={(poi) => {
+                  setEditingPoi({ ...poi });
+                  setFocusPoint(poi);
+                  setActivePoiId(poi.id);
+                }}
+                onRestorePrimarySource={restaurarFontePrincipal}
+                onDownloadJson={baixarJson}
+                onDownloadLog={baixarLogCompleto}
+                onCopyLog={copiarLogCompleto}
+                onExitAdmin={handleCloseAdminMode}
+              />
+            </div>
+          </div>
+        )}
 
         <MapAdminEditor
           isOpen={isAdmin && Boolean(editingPoi)}
@@ -3058,8 +2730,12 @@ const ModaCenterMap = () => {
           editingBadgePreview={editingBadgePreview}
           hasInvalidEditingAccentColor={hasInvalidEditingAccentColor}
           setEditingPoi={setEditingPoi}
+          mapWidth={MAP_WIDTH}
+          mapHeight={MAP_HEIGHT}
           adminDenseInputStyle={adminDenseInputStyle}
           adminDenseButtonStyle={adminDenseButtonStyle}
+          onPositionInputChange={updateEditingPoiCoordinates}
+          onSaveLocation={salvarLocalizacaoAtual}
           onSaveDraft={salvarRascunhoPonto}
           onPublishNow={salvarPonto}
           onRemoveLocal={removerPontoLocal}
@@ -3068,7 +2744,39 @@ const ModaCenterMap = () => {
         />
 
         {!isAdmin && (
-          <MapHeader logoSrc={brandIcon} logoScale={BRAND_LOGO_SCALE} />
+          <>
+            <MapHeader logoSrc={brandIcon} logoScale={BRAND_LOGO_SCALE} />
+            {hasManualMapRouteOrigin && (
+              <div className='map-origin-quick-actions'>
+                <button
+                  type='button'
+                  onClick={handleChangeRouteOrigin}
+                  className='map-origin-quick-action map-origin-quick-action-primary'
+                >
+                  Mudar localizacao
+                </button>
+                <button
+                  type='button'
+                  onClick={clearManualRouteOrigin}
+                  className='map-origin-quick-action map-origin-quick-action-close'
+                  aria-label='Cancelar localizacao atual'
+                  title='Cancelar localizacao atual'
+                >
+                  X
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {!isAdmin && (
+          <MapTutorialOverlay
+            isOpen={isTutorialOpen}
+            currentStep={currentTutorialStep}
+            currentStepIndex={tutorialStepIndex}
+            totalSteps={tutorialSteps.length}
+            onNext={handleNextTutorialStep}
+            onClose={closeTutorial}
+          />
         )}
 
         {!isAdmin && (
@@ -3079,7 +2787,7 @@ const ModaCenterMap = () => {
                 left: '50%',
                 bottom: dockBottom,
                 transform: 'translateX(-50%)',
-                zIndex: 3200,
+                zIndex: activeDockPanel === 'route' ? 3350 : 3200,
                 width: dockWidth,
               } as CSSProperties
             }
@@ -3107,10 +2815,6 @@ const ModaCenterMap = () => {
               <div className='map-action-sheet-scroll'>
                 {activeDockPanel === 'pins' && (
                   <PinPanel
-                    shouldShowPinsLocationPrompt={shouldShowPinsLocationPrompt}
-                    liveTrackingState={liveTrackingState}
-                    liveLocationStatusText={liveLocationStatusText}
-                    onRequestLocation={startLiveLocationTracking}
                     searchTerm={searchTerm}
                     onSearchTermChange={setSearchTerm}
                     poiTypeLabels={poiTypeLabels}
@@ -3123,22 +2827,12 @@ const ModaCenterMap = () => {
                     arePinsHiddenByZoom={arePinsHiddenByZoom}
                     isPresentationMode={isPresentationMode}
                     inputStyle={inputStyle}
-                    actionButtonStyle={actionButton}
                     getPoiAccentColor={getPoiAccentColor}
                     getPoiAccentRingColor={(accentColor) => mixColors(accentColor, '#ffffff', 0.74)}
                     onToggleManualVisibility={toggleManualVisibility}
                     onFocusPoi={(poi) => focusPoi(poi, true)}
                     onViewPoi={handlePoiListView}
                     onNavigatePoi={handlePoiListNavigate}
-                    selectedDestinationPoiName={selectedDestinationPoi?.nome ?? null}
-                    routeMessage={routeMessage}
-                    routeDistanceMeters={routeDistanceMeters}
-                    routeEtaMinutes={routeEtaMinutes}
-                    activeRouteMetricLabel={activeRouteMetricLabel}
-                    activeRouteMetricValue={activeRouteMetricValue}
-                    onClearRoute={clearRoute}
-                    formatDistanceLabel={formatDistanceLabel}
-                    formatWalkingTimeLabel={formatWalkingTimeLabel}
                   />
                 )}
 
@@ -3159,7 +2853,6 @@ const ModaCenterMap = () => {
 
                 {activeDockPanel === 'route' && (
                   <RoutePanel
-                    liveLocationCard={liveLocationCard}
                     activeRouteOriginSummaryName={activeRouteOriginSummaryName}
                     activeRouteOriginSummaryHelp={activeRouteOriginSummaryHelp}
                     originQuery={originQuery}
@@ -3188,12 +2881,8 @@ const ModaCenterMap = () => {
                     destinationSuggestions={destinationSuggestions}
                     showDestinationSuggestions={showDestinationSuggestions}
                     onClearRoute={clearRoute}
-                    onClearManualRouteOrigin={clearManualRouteOrigin}
+                    onChangeRouteOrigin={handleChangeRouteOrigin}
                     hasManualRouteOrigin={hasManualRouteOrigin}
-                    hasManualMapRouteOrigin={hasManualMapRouteOrigin}
-                    onRepositionManualOrigin={() =>
-                      openManualOriginPicker('Toque em outro corredor ou perto de um pin para mudar sua origem manual.')
-                    }
                     routeMessage={routeMessage}
                     routeDistanceMeters={routeDistanceMeters}
                     routeEtaMinutes={routeEtaMinutes}
@@ -3210,67 +2899,17 @@ const ModaCenterMap = () => {
               </div>
             </div>
 
-            <>
-              <MapDockButtons activeDockPanel={activeDockPanel} onTogglePanel={toggleDockPanel} />
-              {!isPresentationMode && (
-                <button
-                  onClick={() => {
-                    setTutorialStepIndex(0);
-                    closeDockPanel();
-                    setIsTutorialOpen(true);
-                  }}
-                  className={`map-toggle-btn ${isTutorialOpen ? 'active' : ''} ${activeDockPanel ? 'dimmed' : ''}`}
-                  aria-pressed={isTutorialOpen}
-                >
-                  <span className='map-toggle-btn-icon' aria-hidden='true'>
-                    <svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>
-                      <rect x='4' y='4' width='7' height='7' rx='1.5' />
-                      <rect x='13' y='4' width='7' height='7' rx='1.5' />
-                      <rect x='4' y='13' width='7' height='7' rx='1.5' />
-                      <rect x='13' y='13' width='7' height='7' rx='1.5' />
-                    </svg>
-                  </span>
-                  <span className='map-toggle-btn-label'>Tutorial</span>
-                </button>
-              )}
-            </>
+            <MapDockButtons activeDockPanel={activeDockPanel} onTogglePanel={toggleDockPanel} />
             </div>
-        )}
-
-        {!isAdmin && (
-          <MapTutorialOverlay
-            isOpen={isTutorialOpen}
-            tutorialStepIndex={tutorialStepIndex}
-            currentTutorialStep={currentTutorialStep}
-            liveTrackingState={liveTrackingState}
-            liveLocationStatusText={liveLocationStatusText}
-            isTutorialLocationStep={isTutorialLocationStep}
-            canFinishTutorialLocationStep={canFinishTutorialLocationStep}
-            onClose={closeTutorial}
-            onPreviousStep={() => setTutorialStepIndex((prev) => Math.max(0, prev - 1))}
-            onNextStep={() => setTutorialStepIndex((prev) => Math.min(tutorialSteps.length - 1, prev + 1))}
-            onRequestLocation={() => void startLiveLocationTracking()}
-          />
         )}
         {!isAdmin && (
           <ManualOriginFallbackOverlay
             isOpen={isManualOriginPickerOpen}
             mode={manualOriginPickerMode}
             destinationName={selectedDestinationPoi?.nome ?? null}
-            liveTrackingState={liveTrackingState}
             statusMessage={manualOriginOverlayStatusMessage}
-            onRetryGps={handleRetryGpsAfterManualFallback}
-            onUseMainPoints={handleUseMainPointsForRoute}
-          />
-        )}
-        {!isAdmin && (
-          <AgendaNotificationStack
-            notifications={agendaNotifications}
-            onDismiss={dismissAgendaNotification}
-            onNavigate={(notification) => {
-              dismissAgendaNotification(notification.id);
-              handleAgendaSessionNavigateById(notification.sessionId);
-            }}
+            nearbyPois={manualOriginNearbyPois}
+            onSelectNearbyPoi={handleNearbyManualOriginSelect}
           />
         )}
           <MapContainer
@@ -3302,42 +2941,30 @@ const ModaCenterMap = () => {
               onZoomLevelChange={handleMapZoomLevelChange}
               onZoomRangeChange={handleMapZoomRangeChange}
             />
-          <TileLayer
-            url={BASEMAP_TILE_URL}
-            attribution={BASEMAP_TILE_ATTRIBUTION}
-            className='basemap-street-layer'
-            opacity={basemapOpacity}
-            maxNativeZoom={BASEMAP_TILE_MAX_NATIVE_ZOOM}
-            maxZoom={BASEMAP_TILE_MAX_ZOOM}
-            keepBuffer={8}
-            updateWhenIdle={true}
-            updateWhenZooming={false}
-            updateInterval={140}
-          />
-          {effectiveMapSurfaceUrl && (
-            <ImageOverlay url={effectiveMapSurfaceUrl} bounds={mapOverlayBounds} opacity={mapOverlayOpacity} zIndex={20} />
-          )}
-          {!isAdmin && (
-            <Polygon
-              positions={eventBoundaryLatLngPoints}
-              pathOptions={{
-                color: BRAND_COLORS.highlight,
-                weight: 2,
-                opacity: 0.72,
-                dashArray: '10 10',
-                fillColor: BRAND_COLORS.highlight,
-                fillOpacity: 0.05,
-              }}
-              interactive={false}
+          {officialMapSurfaceUrls.map((surfaceUrl, index) => (
+            <ImageOverlay
+              key={surfaceUrl}
+              url={surfaceUrl}
+              bounds={mapOverlayBounds}
+              opacity={mapOverlayOpacity}
+              zIndex={20 + index}
+            />
+          ))}
+          {logicalMapOverlayOpacity > 0 && (
+            <ImageOverlay
+              url={logicalMapSurfaceUrl}
+              bounds={logicalMapOverlayBounds}
+              opacity={logicalMapOverlayOpacity}
+              zIndex={logicalMapOverlayZIndex}
+              className={logicalMapOverlayClassName}
             />
           )}
           <MapInteractionEvents
             isAdmin={isAdmin}
             suppressAdminMapClickRef={suppressAdminMapClickRef}
             latLngToImageOverlay={latLngToImageOverlay}
-            defaultActivityImageUrl={defaultPoiImages.atividade}
             onPublicMapClick={handlePublicMapClick}
-            onAdminDraftClick={setEditingPoi}
+            onAdminMapClick={handleAdminMapPointPick}
             onZoomLevelChange={setMapZoomLevel}
           />
           <MapSizeSync />
@@ -3346,40 +2973,41 @@ const ModaCenterMap = () => {
             onRouteViewportSettledChange={setIsRouteViewportSettled}
           />
 
-
-          <MapRouteLayer
-            routeLatLngPoints={routeLatLngPoints}
-            visibleRouteLatLngPoints={visibleRouteLatLngPoints}
-            isMobile={isMobile}
-            isRouteViewportSettled={isRouteViewportSettled}
-            isRouteRevealComplete={isRouteRevealComplete}
-            routeRevealHeadPoint={routeRevealHeadPoint}
-            routeShadowColor={routeShadowColor}
-            routeGuideColor={routeGuideColor}
-            surfaceColor={BRAND_COLORS.surface}
-            primaryColor={BRAND_COLORS.primaryStrong}
-            mixColors={mixColors}
-          />
+          <Pane name='route-overlay-pane' style={{ zIndex: 675, pointerEvents: 'none' }}>
+            <MapRouteLayer
+              routeLatLngPoints={routeLatLngPoints}
+              visibleRouteLatLngPoints={visibleRouteLatLngPoints}
+              isMobile={isMobile}
+              isRouteViewportSettled={isRouteViewportSettled}
+              isRouteRevealComplete={isRouteRevealComplete}
+              routeRevealHeadPoint={routeRevealHeadPoint}
+              routeShadowColor={routeShadowColor}
+              routeGuideColor={routeGuideColor}
+              surfaceColor={BRAND_COLORS.surface}
+              primaryColor={BRAND_COLORS.primaryStrong}
+              mixColors={mixColors}
+            />
+          </Pane>
 
           {!isAdmin && (
-            <MapPresenceLayer
-              liveLocation={liveLocation}
-              liveLocationMarkerPosition={liveLocationMarkerPosition}
-              manualOriginMarkerPosition={manualMapOriginMarkerPosition}
-              routeLatLngPoints={routeLatLngPoints}
-              hasLiveLocationFix={hasLiveLocationFix}
-              routeMarkerPosition={routeMarkerPosition}
-              routeRemainingEtaLabel={routeRemainingEtaLabel}
-              liveLocationMarkerTone={liveLocationMarkerTone}
-              manualOriginMarkerTone={BRAND_COLORS.highlight}
-              previewMarkerTone={previewMarkerTone}
-              renderPresenceMarker={renderPresenceMarker}
-            />
+            <Pane name='route-presence-pane' style={{ zIndex: 680, pointerEvents: 'none' }}>
+              <MapPresenceLayer
+                manualOriginMarkerPosition={manualMapOriginMarkerPosition}
+                manualOriginMarkerLabel={manualOriginMarkerLabel}
+                routeLatLngPoints={routeLatLngPoints}
+                routeMarkerPosition={routeMarkerPosition}
+                routeRemainingEtaLabel={routeRemainingEtaLabel}
+                manualOriginMarkerTone={BRAND_COLORS.highlight}
+                previewMarkerTone={previewMarkerTone}
+                renderPresenceMarker={renderPresenceMarker}
+              />
+            </Pane>
           )}
 
           <MapPoiLayer
             visiblePois={visiblePois}
             activePoiId={activePoiId}
+            selectedOriginId={selectedOriginId}
             selectedDestinationId={selectedDestinationId}
             isAdmin={isAdmin}
             defaultPoiImages={defaultPoiImages}
@@ -3395,6 +3023,7 @@ const ModaCenterMap = () => {
               focusPoi(poi, false, { moveCamera: false });
               navigateToPoi(poi);
             }}
+            onPopupSetOrigin={handleSetPoiAsCurrentLocation}
             onMarkerSelect={handleMarkerSelection}
             onSuppressNextAdminMapClick={suppressNextAdminMapClick}
             onUpdatePoiPosition={updatePoiPosition}
