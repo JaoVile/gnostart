@@ -368,9 +368,9 @@ const ecosystemItems: PartnerPanelItem[] = [
   createBrandItem({
     id: 'windrose',
     name: 'WINDROSE',
-    subtitle: 'Narrativa visual e identidade digital',
-    summary: 'Startup voltada a marcas, posicionamento e experiencias criativas no ambiente online.',
-    badge: 'Branding',
+    subtitle: 'Automações e identidade digital',
+    summary: 'Startup voltada para o desenvolvimento de soluções que automizam processos e escalam negócios com IA',
+    badge: 'Automações',
     accent: '#0c1735',
     hints: ['windrose', 'WINDROSE'],
   }),
