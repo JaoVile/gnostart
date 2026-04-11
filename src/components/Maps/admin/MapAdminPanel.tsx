@@ -41,15 +41,11 @@ type MapAdminPanelProps = {
   freeWalkNavigationEnabled: boolean;
   currentSourceMeta: SourceMeta;
   currentMapBuildLabel: string;
-  backendSyncLabel: string;
   poisCount: number;
   draftPoiCount: number;
-  syncedPoiCount: number;
   disconnectedPoiCount: number;
   onStartNewPoiDraft: () => void;
-  onRefreshServer: () => void;
   onOpenJsonImporter: () => void;
-  onPublishDrafts: () => void;
   adminDenseButtonStyle: CSSProperties;
   adminDenseInputStyle: CSSProperties;
   adminSearchTerm: string;
@@ -79,7 +75,6 @@ type MapAdminEditorProps = {
   isOpen: boolean;
   editingPoi: EditingPoi | null;
   editingPoiIsDraft: boolean;
-  editingPoiExistsOnBackend: boolean;
   freeWalkNavigationEnabled: boolean;
   brandColors: {
     ink: string;
@@ -98,9 +93,8 @@ type MapAdminEditorProps = {
   onPositionInputChange: (x: number, y: number) => void;
   onSaveLocation: () => void;
   onSaveDraft: () => void;
-  onPublishNow: () => void;
-  onRemoveLocal: (id: string) => void;
-  onDeleteFromServer: (id: string) => void;
+  onSavePoi: () => void;
+  onDeletePoi: (id: string) => void;
   onClose: () => void;
 };
 
@@ -112,15 +106,11 @@ export const MapAdminPanel = ({
   freeWalkNavigationEnabled,
   currentSourceMeta,
   currentMapBuildLabel,
-  backendSyncLabel,
   poisCount,
   draftPoiCount,
-  syncedPoiCount,
   disconnectedPoiCount,
   onStartNewPoiDraft,
-  onRefreshServer,
   onOpenJsonImporter,
-  onPublishDrafts,
   adminDenseButtonStyle,
   adminDenseInputStyle,
   adminSearchTerm,
@@ -212,13 +202,11 @@ export const MapAdminPanel = ({
         >
           {currentSourceMeta.label}
         </div>
-        <div style={{ fontSize: 11, opacity: 0.88 }}>{backendSyncLabel}</div>
         <div style={{ fontSize: 10, opacity: 0.72 }}>Build atual: {currentMapBuildLabel}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
           {[
             ['Pontos', poisCount],
             ['Rascunhos', draftPoiCount],
-            ['Publicados', syncedPoiCount],
             [freeWalkNavigationEnabled ? 'Rota livre' : 'Sem rota', disconnectedPoiCount],
           ].map(([label, value]) => (
             <div
@@ -244,17 +232,8 @@ export const MapAdminPanel = ({
         <button onClick={onStartNewPoiDraft} className='btn btn-primary' style={adminDenseButtonStyle}>
           Novo ponto
         </button>
-        <button onClick={onRefreshServer} className='btn btn-neutral' style={adminDenseButtonStyle}>
-          Atualizar servidor
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={onOpenJsonImporter} className='btn btn-neutral' style={adminDenseButtonStyle}>
           Carregar arquivo (.json)
-        </button>
-        <button onClick={onPublishDrafts} className='btn btn-success' style={adminDenseButtonStyle}>
-          Publicar rascunhos
         </button>
       </div>
 
@@ -572,7 +551,6 @@ export const MapAdminEditor = ({
   isOpen,
   editingPoi,
   editingPoiIsDraft,
-  editingPoiExistsOnBackend,
   freeWalkNavigationEnabled,
   brandColors,
   editingAccentColorPreview,
@@ -586,9 +564,8 @@ export const MapAdminEditor = ({
   onPositionInputChange,
   onSaveLocation,
   onSaveDraft,
-  onPublishNow,
-  onRemoveLocal,
-  onDeleteFromServer,
+  onSavePoi,
+  onDeletePoi,
   onClose,
 }: MapAdminEditorProps) => {
   const [isPhotoLibraryOpen, setIsPhotoLibraryOpen] = useState(false);
@@ -649,24 +626,7 @@ export const MapAdminEditor = ({
                 textTransform: 'uppercase',
               }}
             >
-              {editingPoiIsDraft ? 'Rascunho local' : 'Sem rascunho pendente'}
-            </span>
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                minHeight: 28,
-                padding: '0 10px',
-                borderRadius: 999,
-                background: editingPoiExistsOnBackend ? 'rgba(106, 56, 208, 0.12)' : 'rgba(23, 19, 31, 0.08)',
-                color: editingPoiExistsOnBackend ? brandColors.primaryStrong : brandColors.textMuted,
-                fontSize: 11,
-                fontWeight: 800,
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-              }}
-            >
-              {editingPoiExistsOnBackend ? 'Ja esta no servidor' : 'Ainda nao publicado'}
+              {editingPoiIsDraft ? 'Rascunho local' : 'Salvo no workspace'}
             </span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
@@ -928,23 +888,16 @@ export const MapAdminEditor = ({
             <button onClick={onSaveDraft} style={adminDenseButtonStyle} className='btn btn-neutral'>
               Salvar rascunho
             </button>
-            <button onClick={onPublishNow} style={adminDenseButtonStyle} className='btn btn-primary'>
-              Publicar agora
+            <button onClick={onSavePoi} style={adminDenseButtonStyle} className='btn btn-primary'>
+              Salvar ponto
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            {editingPoi.id && (
-              <button onClick={() => onRemoveLocal(editingPoi.id!)} style={adminDenseButtonStyle} className='btn btn-neutral'>
-                Remover local
-              </button>
-            )}
-            {editingPoi.id && editingPoiExistsOnBackend && (
-              <button onClick={() => onDeleteFromServer(editingPoi.id!)} style={adminDenseButtonStyle} className='btn btn-danger'>
-                Excluir do servidor
-              </button>
-            )}
-          </div>
+          {editingPoi.id && (
+            <button onClick={() => onDeletePoi(editingPoi.id!)} style={adminDenseButtonStyle} className='btn btn-danger'>
+              Excluir ponto
+            </button>
+          )}
 
           <button onClick={onClose} style={{ ...adminDenseButtonStyle, width: '100%' }} className='btn btn-neutral'>
             Fechar

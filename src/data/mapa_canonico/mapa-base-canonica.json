@@ -2,7 +2,7 @@
   "version": 1,
   "eventName": "GNOSTART",
   "route": {
-    "referenceMapSource": "../public/maps/mapa_geral.svg",
+    "referenceMapSource": "../src/assets/_originals/maps/mapa_geral.svg",
     "logicalVectorSource": "logica_nova.svg",
     "logicalMaskSource": "logica_nova.png",
     "graphOutput": "../src/data/navGraph.json",
@@ -11,10 +11,10 @@
     "alphaThreshold": 1,
     "gridSize": 2,
     "alignment": {
-      "offsetX": 255.8,
-      "offsetY": -0.5,
-      "scaleX": 0.665,
-      "scaleY": 0
+      "offsetX": 0,
+      "offsetY": 0,
+      "scaleX": 1,
+      "scaleY": 1
     },
     "componentBridgeMaxDistance": 18,
     "componentBridgeMaxSize": 80,

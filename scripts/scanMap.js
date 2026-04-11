@@ -96,7 +96,7 @@ const SVG_DENSITY = Number.parseInt(
   10,
 );
 const REFERENCE_MAP_SOURCE =
-  process.env.MAP_REFERENCE_SOURCE || CANONICAL_ROUTE_CONFIG.referenceMapSource || '../public/maps/mapa_geral.svg';
+  process.env.MAP_REFERENCE_SOURCE || CANONICAL_ROUTE_CONFIG.referenceMapSource || '../src/assets/_originals/maps/mapa_geral.svg';
 const LOGICAL_MAP_VECTOR_SOURCE =
   process.env.MAP_LOGIC_VECTOR_SOURCE || CANONICAL_ROUTE_CONFIG.logicalVectorSource || 'logica_nova.svg';
 const LOGICAL_MAP_MASK_SOURCE =

@@ -274,7 +274,13 @@ export const AgendaPanel = ({
             >
               {session.linkedPoiImage && (
                 <div className='agenda-featured-pin'>
-                  <img src={session.linkedPoiImage} alt={session.linkedPoiName ?? session.title} className='agenda-featured-pin-thumb' />
+                  <img
+                    src={session.linkedPoiImage}
+                    alt={session.linkedPoiName ?? session.title}
+                    loading='lazy'
+                    decoding='async'
+                    className='agenda-featured-pin-thumb'
+                  />
                   <span className='agenda-featured-pin-label'>{session.linkedPoiName ?? 'Pin no mapa'}</span>
                 </div>
               )}

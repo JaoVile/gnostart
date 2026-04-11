@@ -392,19 +392,39 @@ export const findPathBetweenPoints = (
     };
   }
 
+  // Estende a rota para comecar/terminar exatamente no pino solicitado,
+  // em vez de parar no no de corredor mais proximo (que pode estar a
+  // varios pixels de distancia, deixando a linha desenhada curta).
+  const startPoint: number[] = [start.y, start.x];
+  const endPoint: number[] = [end.y, end.x];
+
+  const attachEndpoints = (nodePath: number[][] | null): number[][] | null => {
+    if (!nodePath || nodePath.length === 0) return nodePath;
+    const extended = [...nodePath];
+    const firstNode = extended[0];
+    if (firstNode[0] !== startPoint[0] || firstNode[1] !== startPoint[1]) {
+      extended.unshift(startPoint);
+    }
+    const lastNode = extended[extended.length - 1];
+    if (lastNode[0] !== endPoint[0] || lastNode[1] !== endPoint[1]) {
+      extended.push(endPoint);
+    }
+    return dedupePath(extended);
+  };
+
   if (startNodeId === endNodeId) {
     const node = graph[startNodeId];
     return {
       startNodeId,
       endNodeId,
-      path: [[node.y, node.x]],
+      path: attachEndpoints([[node.y, node.x]]),
     };
   }
 
   return {
     startNodeId,
     endNodeId,
-    path: findPath(startNodeId, endNodeId),
+    path: attachEndpoints(findPath(startNodeId, endNodeId)),
   };
 };
 

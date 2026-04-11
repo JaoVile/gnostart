@@ -1,5 +1,7 @@
 const partnerAssetModules = import.meta.glob<string>(
   [
+    '../../../../assets/PARCEIROSEARQUIVOS/**/*.webp',
+    '../../../../assets/PARCEIROSEARQUIVOS/**/*.WEBP',
     '../../../../assets/PARCEIROSEARQUIVOS/**/*.png',
     '../../../../assets/PARCEIROSEARQUIVOS/**/*.PNG',
     '../../../../assets/PARCEIROSEARQUIVOS/**/*.jpg',

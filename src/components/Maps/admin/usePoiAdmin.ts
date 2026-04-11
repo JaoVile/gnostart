@@ -1,5 +1,4 @@
 import { useCallback, type ChangeEvent, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { createPoi, deletePoi, saveAgendaPoiLinks, updatePoi, type MapPoiDto, type UpsertPoiPayload } from '../../../services/mapApi';
 import { CURRENT_MAP_BUILD_REGISTRATION, describeMapBuildRegistrationDifference } from './buildRegistration';
 import { agendaSessions } from '../data/agenda';
 import { defaultPoiImages, normalizeBadgeText, normalizeHexColor } from '../map/poiVisuals';
@@ -27,14 +26,11 @@ type UsePoiAdminOptions = {
   clearRoute: () => void;
   pois: PointData[];
   setPois: Dispatch<SetStateAction<PointData[]>>;
-  serverPois: PointData[];
-  setServerPois: Dispatch<SetStateAction<PointData[]>>;
   draftPoiIds: string[];
   setDraftPoiIds: Dispatch<SetStateAction<string[]>>;
   setManualVisiblePoiIds: Dispatch<SetStateAction<string[]>>;
   setPoiDataSource: Dispatch<SetStateAction<PoiDataSource>>;
   setAdminStatusMessage: Dispatch<SetStateAction<string | null>>;
-  setBackendSyncState: Dispatch<SetStateAction<'loading' | 'ready' | 'error'>>;
   setPoiAccessCount: Dispatch<SetStateAction<PoiAccessCount>>;
   adminImportInputRef: RefObject<HTMLInputElement | null>;
   effectiveAdminAgendaPoiLinks: AgendaSessionPoiLinkOverrides;
@@ -54,14 +50,6 @@ type UsePoiAdminOptions = {
   loadPoiRuntimeBackup: () => PointData[];
   getFrontSeedPois: () => PointData[];
   clearAdminWorkspaceSnapshot: () => void;
-  sanitizeAgendaPoiLinkRecord: (value: unknown) => AgendaSessionPoiLinkOverrides;
-  fromApiPoi: (poi: MapPoiDto) => PointData;
-  toPoiApiPayload: (
-    poi: PointData,
-    options?: {
-      includeId?: boolean;
-    },
-  ) => UpsertPoiPayload;
   eventName: string;
   exportFileName: string;
   currentMapBuildLabel: string;
@@ -79,14 +67,11 @@ export const usePoiAdmin = ({
   clearRoute,
   pois,
   setPois,
-  serverPois,
-  setServerPois,
   draftPoiIds,
   setDraftPoiIds,
   setManualVisiblePoiIds,
   setPoiDataSource,
   setAdminStatusMessage,
-  setBackendSyncState,
   setPoiAccessCount,
   adminImportInputRef,
   effectiveAdminAgendaPoiLinks,
@@ -100,9 +85,6 @@ export const usePoiAdmin = ({
   loadPoiRuntimeBackup,
   getFrontSeedPois,
   clearAdminWorkspaceSnapshot,
-  sanitizeAgendaPoiLinkRecord,
-  fromApiPoi,
-  toPoiApiPayload,
   eventName,
   exportFileName,
   currentMapBuildLabel,
@@ -182,7 +164,7 @@ export const usePoiAdmin = ({
             }
           : prev,
       );
-      setAdminStatusMessage('Posicao atualizada na edicao local. Publique quando quiser enviar ao servidor.');
+      setAdminStatusMessage('Posicao atualizada na edicao local.');
     },
     [
       applyExistingPoiPosition,
@@ -285,7 +267,7 @@ export const usePoiAdmin = ({
       };
     });
     setAdminStatusMessage(
-      `Localizacao salva no workspace para ${editingPoi.nome?.trim() || editingPoi.id}. Baixe o JSON, copie o log ou publique quando quiser.`,
+      `Localizacao salva no workspace para ${editingPoi.nome?.trim() || editingPoi.id}. Baixe o JSON ou copie o log quando quiser.`,
     );
   }, [
     editingPoi,
@@ -413,102 +395,29 @@ export const usePoiAdmin = ({
     setPois,
   ]);
 
-  const publishPoiToBackend = useCallback(
-    async (poi: PointData, currentServerPois = serverPois) => {
-      const existsOnBackend = currentServerPois.some((item) => item.id === poi.id);
-      const syncedPoi = existsOnBackend
-        ? await updatePoi(poi.id, toPoiApiPayload(poi))
-        : await createPoi(toPoiApiPayload(poi, { includeId: true }));
+  const salvarPonto = useCallback(() => {
+    salvarRascunhoPonto();
+  }, [salvarRascunhoPonto]);
 
-      return fromApiPoi(syncedPoi);
-    },
-    [fromApiPoi, serverPois, toPoiApiPayload],
-  );
-
-  const publicarPontoAtual = useCallback(async () => {
-    const novoPonto = buildPoiFromEditingState();
-    if (!novoPonto) return;
-
-    try {
-      const normalizedPoi = await publishPoiToBackend(novoPonto);
-
-      setPois((prev) => upsertPoiInCollection(prev, normalizedPoi));
-      setServerPois((prev) => upsertPoiInCollection(prev, normalizedPoi));
-      setDraftPoiIds((prev) => prev.filter((id) => id !== normalizedPoi.id));
-      setEditingPoi(normalizedPoi);
-      setFocusPoint(normalizedPoi);
-      setActivePoiId(normalizedPoi.id);
-      setBackendSyncState('ready');
-      setAdminStatusMessage(`Ponto ${normalizedPoi.nome} publicado no servidor.`);
-    } catch (error) {
-      console.error('Falha ao publicar ponto no backend:', error);
-      window.alert('Nao foi possivel publicar o ponto no servidor.');
-      setBackendSyncState('error');
-    }
-  }, [
-    buildPoiFromEditingState,
-    publishPoiToBackend,
-    setActivePoiId,
-    setAdminStatusMessage,
-    setBackendSyncState,
-    setDraftPoiIds,
-    setEditingPoi,
-    setFocusPoint,
-    setPois,
-    setServerPois,
-  ]);
-
-  const publicarRascunhos = useCallback(async () => {
-    if (draftPoiIds.length === 0) {
-      setAdminStatusMessage('Nao ha rascunhos pendentes para publicar.');
-      return;
-    }
-
-    let nextPois = [...pois];
-    let nextServerPois = [...serverPois];
-    const remainingDraftIds: string[] = [];
-    let syncedCount = 0;
-
-    for (const poiId of draftPoiIds) {
-      const poi = nextPois.find((item) => item.id === poiId);
-      if (!poi) continue;
-
-      try {
-        const normalizedPoi = await publishPoiToBackend(poi, nextServerPois);
-        nextPois = upsertPoiInCollection(nextPois, normalizedPoi);
-        nextServerPois = upsertPoiInCollection(nextServerPois, normalizedPoi);
-        syncedCount += 1;
-      } catch (error) {
-        console.error(`Falha ao publicar o rascunho ${poiId}:`, error);
-        remainingDraftIds.push(poiId);
-      }
-    }
-
-    setPois(nextPois);
-    setServerPois(nextServerPois);
-    setDraftPoiIds(remainingDraftIds);
-    setBackendSyncState(remainingDraftIds.length > 0 ? 'error' : 'ready');
-    setAdminStatusMessage(
-      remainingDraftIds.length > 0
-        ? `${syncedCount} rascunho(s) publicados e ${remainingDraftIds.length} permaneceram pendentes.`
-        : `${syncedCount} rascunho(s) publicados com sucesso.`,
-    );
-  }, [draftPoiIds, pois, publishPoiToBackend, serverPois, setAdminStatusMessage, setBackendSyncState, setDraftPoiIds, setPois, setServerPois]);
-
-  const removerPontoLocal = useCallback((id: string) => {
-    if (!window.confirm('Remover este ponto apenas da edicao local?')) return;
+  const deletarPonto = useCallback((id: string) => {
+    if (!window.confirm('Apagar este ponto definitivamente?')) return;
 
     setPois((prev) => prev.filter((poi) => poi.id !== id));
     setDraftPoiIds((prev) => prev.filter((poiId) => poiId !== id));
+    setPoiAccessCount((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setManualVisiblePoiIds((prev) => prev.filter((poiId) => poiId !== id));
     setPoiDataSource('local-workspace');
-    setFocusPoint((prev) => (prev?.id === id ? null : prev));
-    setEditingPoi((prev) => (prev?.id === id ? null : prev));
     if (activePoiId === id) setActivePoiId(null);
     if (selectedDestinationId === id) {
       clearRoute();
     }
-    setAdminStatusMessage('Ponto removido apenas da edicao local.');
+    setEditingPoi(null);
+    setAdminStatusMessage('Ponto removido da edicao local.');
   }, [
     activePoiId,
     clearRoute,
@@ -517,8 +426,8 @@ export const usePoiAdmin = ({
     setAdminStatusMessage,
     setDraftPoiIds,
     setEditingPoi,
-    setFocusPoint,
     setManualVisiblePoiIds,
+    setPoiAccessCount,
     setPoiDataSource,
     setPois,
   ]);
@@ -579,18 +488,11 @@ export const usePoiAdmin = ({
   );
 
   const restaurarFontePrincipal = useCallback(() => {
-    if (!window.confirm('Descartar a edicao local e voltar para a fonte principal?')) return;
+    if (!window.confirm('Descartar a edicao local e voltar para a base?')) return;
 
     setDraftPoiIds([]);
     setEditingPoi(null);
     clearAdminWorkspaceSnapshot();
-
-    if (serverPois.length > 0) {
-      setPois(serverPois);
-      setPoiDataSource('backend');
-      setAdminStatusMessage('Edicao local descartada. Voltamos aos dados do servidor.');
-      return;
-    }
 
     const runtimeBackup = loadPoiRuntimeBackup();
     if (runtimeBackup.length > 0) {
@@ -607,58 +509,11 @@ export const usePoiAdmin = ({
     clearAdminWorkspaceSnapshot,
     getFrontSeedPois,
     loadPoiRuntimeBackup,
-    serverPois,
     setAdminStatusMessage,
     setDraftPoiIds,
     setEditingPoi,
     setPoiDataSource,
     setPois,
-  ]);
-
-  const salvarPonto = useCallback(async () => {
-    await publicarPontoAtual();
-  }, [publicarPontoAtual]);
-
-  const deletarPonto = useCallback(async (id: string) => {
-    if (!window.confirm('Apagar este ponto permanentemente?')) return;
-
-    try {
-      await deletePoi(id);
-
-      setPois((prev) => prev.filter((poi) => poi.id !== id));
-      setServerPois((prev) => prev.filter((poi) => poi.id !== id));
-      setDraftPoiIds((prev) => prev.filter((poiId) => poiId !== id));
-      setPoiAccessCount((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      setManualVisiblePoiIds((prev) => prev.filter((poiId) => poiId !== id));
-      if (activePoiId === id) setActivePoiId(null);
-      if (selectedDestinationId === id) {
-        clearRoute();
-      }
-      setEditingPoi(null);
-      setBackendSyncState('ready');
-      setAdminStatusMessage('Ponto removido do servidor com sucesso.');
-    } catch (error) {
-      console.error('Falha ao deletar ponto no backend:', error);
-      window.alert('Nao foi possivel excluir o ponto no servidor.');
-    }
-  }, [
-    activePoiId,
-    clearRoute,
-    selectedDestinationId,
-    setActivePoiId,
-    setAdminStatusMessage,
-    setBackendSyncState,
-    setDraftPoiIds,
-    setEditingPoi,
-    setManualVisiblePoiIds,
-    setPoiAccessCount,
-    setPois,
-    setServerPois,
   ]);
 
   const toggleManualVisibility = useCallback((poiId: string) => {
@@ -775,53 +630,25 @@ export const usePoiAdmin = ({
       }
 
       setAdminAgendaPoiLinks(nextLinks);
-      setAdminStatusMessage('Salvando vinculo do cronograma no servidor...');
-
-      void saveAgendaPoiLinks(nextLinks)
-        .then((response) => {
-          const persistedLinks = sanitizeAgendaPoiLinkRecord(response.links);
-          setAdminAgendaPoiLinks(persistedLinks);
-          setAdminStatusMessage(
-            nextPoiId && nextPoiId !== session.linkedPoiId
-              ? 'Vinculo manual do cronograma salvo no servidor.'
-              : 'Cronograma voltou a usar o vinculo automatico deste horario.',
-          );
-        })
-        .catch((error) => {
-          console.error('Falha ao salvar vinculos do cronograma no backend:', error);
-          setAdminStatusMessage(
-            'Nao foi possivel salvar o vinculo do cronograma no servidor agora. A alteracao segue apenas neste navegador.',
-          );
-        });
+      setAdminStatusMessage(
+        nextPoiId && nextPoiId !== session.linkedPoiId
+          ? 'Vinculo manual do cronograma salvo localmente.'
+          : 'Cronograma voltou a usar o vinculo automatico deste horario.',
+      );
     },
-    [effectiveAdminAgendaPoiLinks, sanitizeAgendaPoiLinkRecord, setAdminAgendaPoiLinks, setAdminStatusMessage],
+    [effectiveAdminAgendaPoiLinks, setAdminAgendaPoiLinks, setAdminStatusMessage],
   );
 
   const handleResetAdminAgendaPoiLinks = useCallback(() => {
     setAdminAgendaPoiLinks({});
-    setAdminStatusMessage('Removendo vinculos manuais do cronograma no servidor...');
-
-    void saveAgendaPoiLinks({})
-      .then((response) => {
-        setAdminAgendaPoiLinks(sanitizeAgendaPoiLinkRecord(response.links));
-        setAdminStatusMessage('Todos os vinculos manuais do cronograma foram removidos.');
-      })
-      .catch((error) => {
-        console.error('Falha ao limpar vinculos do cronograma no backend:', error);
-        setAdminStatusMessage(
-          'Nao foi possivel limpar os vinculos do cronograma no servidor agora. A mudanca segue apenas neste navegador.',
-        );
-      });
-  }, [sanitizeAgendaPoiLinkRecord, setAdminAgendaPoiLinks, setAdminStatusMessage]);
+    setAdminStatusMessage('Todos os vinculos manuais do cronograma foram removidos.');
+  }, [setAdminAgendaPoiLinks, setAdminStatusMessage]);
 
   return {
     updatePoiPosition,
     salvarLocalizacaoAtual,
     startNewPoiDraft,
     salvarRascunhoPonto,
-    publicarPontoAtual,
-    publicarRascunhos,
-    removerPontoLocal,
     abrirImportadorJson,
     handleAdminMapPointPick,
     handleAdminImportFileChange,

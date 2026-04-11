@@ -12,11 +12,9 @@ COPY public ./public
 COPY scripts ./scripts
 COPY src ./src
 
-ARG VITE_API_BASE_URL=
 ARG VITE_MAP_ID=default_map
 
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
-    VITE_MAP_ID=$VITE_MAP_ID
+ENV VITE_MAP_ID=$VITE_MAP_ID
 
 RUN npm run build
 

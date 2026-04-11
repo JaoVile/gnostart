@@ -7,6 +7,9 @@ dist-ssr/
 
 build/
 coverage/
+tmp/
+
+src/assets/_originals/
 
 .DS_Store
 Thumbs.db

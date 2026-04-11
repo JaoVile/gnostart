@@ -6,7 +6,7 @@
     "x": 774,
     "y": 390,
     "imagemUrl": "fotopins/Startups.jpeg",
-    "nodeId": "774_392"
+    "nodeId": "778_392"
   },
   {
     "id": "area_de_alimentacao",
@@ -15,7 +15,7 @@
     "x": 694,
     "y": 313,
     "imagemUrl": "fotopins/Areadealimentacao.png",
-    "nodeId": "696_330"
+    "nodeId": "686_322"
   },
   {
     "id": "area_de_fotos",
@@ -33,7 +33,7 @@
     "x": 686,
     "y": 349,
     "imagemUrl": "fotopins/Asces.png",
-    "nodeId": "686_348"
+    "nodeId": "682_340"
   },
   {
     "id": "banheiros",
@@ -51,7 +51,7 @@
     "x": 708,
     "y": 379,
     "imagemUrl": "fotopins/Barracasprefeitura.png",
-    "nodeId": "706_378"
+    "nodeId": "708_384"
   },
   {
     "id": "cafeteria",
@@ -60,7 +60,7 @@
     "x": 814,
     "y": 390,
     "imagemUrl": "fotopins/Cafeteria.jpeg",
-    "nodeId": "814_390"
+    "nodeId": "812_390"
   },
   {
     "id": "credenciamento",
@@ -69,7 +69,7 @@
     "x": 749,
     "y": 400,
     "imagemUrl": "fotopins/Credenciamento.jpeg",
-    "nodeId": "752_398"
+    "nodeId": "746_398"
   },
   {
     "id": "credenciamento_caravanas",
@@ -87,7 +87,7 @@
     "x": 713,
     "y": 322,
     "imagemUrl": "fotopins/Entradacaravanas.jpeg",
-    "nodeId": "712_322"
+    "nodeId": "712_328"
   },
   {
     "id": "entrada_principal",
@@ -96,7 +96,7 @@
     "x": 752,
     "y": 389,
     "imagemUrl": "fotopins/Entradaprincipal.jpeg",
-    "nodeId": "752_388"
+    "nodeId": "752_384"
   },
   {
     "id": "estande_realidade_virtual",
@@ -105,7 +105,7 @@
     "x": 730,
     "y": 330,
     "imagemUrl": "fotopins/Realidadevirtual.jpeg",
-    "nodeId": "728_330"
+    "nodeId": "734_330"
   },
   {
     "id": "jardim_digital",
@@ -114,7 +114,7 @@
     "x": 722,
     "y": 393,
     "imagemUrl": "fotopins/Jardimdigital.png",
-    "nodeId": "722_392"
+    "nodeId": "722_384"
   },
   {
     "id": "palco_principal",
@@ -123,7 +123,7 @@
     "x": 778,
     "y": 344,
     "imagemUrl": "fotopins/Palcoprincipal.png",
-    "nodeId": "778_344"
+    "nodeId": "780_346"
   },
   {
     "id": "sala_da_arena_gamer",
@@ -141,7 +141,7 @@
     "x": 863,
     "y": 340,
     "imagemUrl": "fotopins/Saladeeconomiacriativa.jpeg",
-    "nodeId": "864_376"
+    "nodeId": "876_340"
   },
   {
     "id": "sala_de_empreendedorismo",
@@ -150,7 +150,7 @@
     "x": 865,
     "y": 387,
     "imagemUrl": "fotopins/Saladeempreendedorismo.jpeg",
-    "nodeId": "862_380"
+    "nodeId": "864_376"
   },
   {
     "id": "senac",
@@ -159,7 +159,7 @@
     "x": 697,
     "y": 331,
     "imagemUrl": "fotopins/Senac.png",
-    "nodeId": "696_330"
+    "nodeId": "686_330"
   },
   {
     "id": "senai",
@@ -168,7 +168,7 @@
     "x": 684,
     "y": 374,
     "imagemUrl": "fotopins/Senai.png",
-    "nodeId": "684_374"
+    "nodeId": "678_374"
   },
   {
     "id": "uninassau",
@@ -177,6 +177,6 @@
     "x": 696,
     "y": 392,
     "imagemUrl": "fotopins/Uninassau.png",
-    "nodeId": "694_392"
+    "nodeId": "700_392"
   }
 ]

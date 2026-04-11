@@ -13,21 +13,10 @@ import {
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { findNearestNode, resolveRoutableNodeId } from '../../utils/pathfinding';
-import {
-  createPoi,
-  deletePoi,
-  fetchMapBootstrap,
-  saveAgendaPoiLinks,
-  trackPoiAccess,
-  updatePoi,
-  type MapPoiDto,
-  type UpsertPoiPayload,
-} from '../../services/mapApi';
 import { MapDockButtons } from './allbuttons/MapDockButtons';
 import { MapHeader } from './header/MapHeader';
 import { MapAdminEditor, MapAdminPanel } from './admin/MapAdminPanel';
@@ -58,7 +47,6 @@ import {
   stateIcons,
 } from './map/poiVisuals';
 import { getAutoAssignedPoiPhotoReference, getPoiPhotoImage, resolvePoiPhotoUrl, resolvePoiPrimaryPhotoUrl } from './map/poiPhotos';
-import { useMapBootstrap } from './map/useMapBootstrap';
 import { PartnersPanel } from './allbuttons/partnership/PartnersPanel';
 import { ManualOriginFallbackOverlay } from './allbuttons/routes/ManualOriginFallbackOverlay';
 import { PinPanel } from './allbuttons/local/PinPanel';
@@ -95,11 +83,9 @@ import type {
 } from './types';
 import {
   getPoiSearchTerms,
-  normalizeContact,
   normalizeForSearch,
   resolveAgendaSessionPoi,
   sessionMatchesPoi,
-  upsertPoiInCollection,
 } from './utils/poiMatching';
 import {
   EVENT_BOUNDARY_IMAGE_POINTS,
@@ -352,29 +338,6 @@ const withAutoAssignedPoiPhoto = (poi: PointData): PointData => {
   return imagemUrl && imagemUrl !== poi.imagemUrl ? { ...poi, imagemUrl } : poi;
 };
 
-const fromApiPoi = (poi: MapPoiDto): PointData => attachNearestNode(withAutoAssignedPoiPhoto(poi));
-
-const sanitizePoiCollection = (poiList: PointData[]) => poiList.filter((poi) => !isPoiRemoved(poi.id));
-
-const toPoiApiPayload = (
-  poi: PointData,
-  options?: {
-    includeId?: boolean;
-  },
-): UpsertPoiPayload => ({
-  ...(options?.includeId ? { id: poi.id } : {}),
-  nome: poi.nome,
-  tipo: poi.tipo,
-  x: poi.x,
-  y: poi.y,
-  descricao: poi.descricao,
-  imagemUrl: poi.imagemUrl,
-  contato: poi.contato,
-  corDestaque: poi.corDestaque,
-  selo: poi.selo,
-  nodeId: poi.nodeId,
-});
-
 const isPoiType = (value: unknown): value is PoiType =>
   value === 'atividade' || value === 'servico' || value === 'banheiro' || value === 'entrada';
 
@@ -505,21 +468,6 @@ const loadPoiRuntimeBackupSnapshot = (): PoiRuntimeBackupSnapshot | null => {
 };
 
 const loadPoiRuntimeBackup = (): PointData[] => loadPoiRuntimeBackupSnapshot()?.pois ?? [];
-
-const persistPoiRuntimeBackup = (value: PointData[]) => {
-  if (typeof window === 'undefined') return;
-
-  try {
-    const snapshot: PoiRuntimeBackupSnapshot = {
-      version: POI_STORAGE_SCHEMA_VERSION,
-      pois: value,
-      build: CURRENT_MAP_BUILD_REGISTRATION,
-    };
-    window.localStorage.setItem(POI_RUNTIME_BACKUP_STORAGE_KEY, JSON.stringify(snapshot));
-  } catch {
-    // Ignora erro de storage para não interromper o mapa.
-  }
-};
 
 const loadAdminWorkspaceSnapshot = (): AdminWorkspaceSnapshot | null => {
   if (typeof window === 'undefined') return null;
@@ -715,10 +663,8 @@ const ModaCenterMap = () => {
   const [isAdminPanelDragging, setIsAdminPanelDragging] = useState(false);
   const [pois, setPois] = useState<PointData[]>(initialPoiRuntime.pois);
   const [officialMapSurfaceUrls, setOfficialMapSurfaceUrls] = useState<string[]>([]);
-  const [serverPois, setServerPois] = useState<PointData[]>([]);
   const [poiDataSource, setPoiDataSource] = useState<PoiDataSource>(initialPoiRuntime.source);
   const [draftPoiIds, setDraftPoiIds] = useState<string[]>(initialPoiRuntime.draftPoiIds);
-  const [backendSyncState, setBackendSyncState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [adminSearchTerm, setAdminSearchTerm] = useState('');
   const [adminTypeFilter, setAdminTypeFilter] = useState<'todos' | PoiType>('todos');
   const [adminStatusMessage, setAdminStatusMessage] = useState<string | null>(
@@ -815,7 +761,6 @@ const ModaCenterMap = () => {
   const tapIndicatorTimeoutsRef = useRef<number[]>([]);
   const manualOriginFallbackTimerRef = useRef<number | null>(null);
   const adminImportInputRef = useRef<HTMLInputElement | null>(null);
-  const hasLoggedBootstrapFailureRef = useRef(false);
   const suppressAdminMapClickRef = useRef(false);
   const adminMapClickTimeoutRef = useRef<number | null>(null);
   const adminPanelDragStateRef = useRef<{
@@ -1032,69 +977,6 @@ const ModaCenterMap = () => {
       }
     };
   }, []);
-  const legacySyncBootstrap = useCallback(
-    async (options?: { forceReplace?: boolean }) => {
-      try {
-        setBackendSyncState('loading');
-        const bootstrap = await fetchMapBootstrap();
-        const backendPois = Array.isArray(bootstrap.pois) ? sanitizePoiCollection(bootstrap.pois.map(fromApiPoi)) : [];
-        const backendAgendaPoiLinks = sanitizeAgendaPoiLinkRecord(bootstrap.agendaPoiLinks);
-
-        setServerPois(backendPois);
-        setAdminAgendaPoiLinks(backendAgendaPoiLinks);
-        persistPoiRuntimeBackup(backendPois);
-        setBackendSyncState('ready');
-        hasLoggedBootstrapFailureRef.current = false;
-
-        const shouldPreserveWorkspace =
-          !options?.forceReplace && poiDataSource === 'local-workspace' && draftPoiIds.length > 0;
-        if (!shouldPreserveWorkspace) {
-          if (backendPois.length > 0) {
-            setPois(backendPois);
-            setPoiDataSource('backend');
-          }
-          setDraftPoiIds([]);
-          clearAdminWorkspaceSnapshot();
-        }
-
-        setAdminStatusMessage(
-          shouldPreserveWorkspace
-            ? 'Servidor sincronizado em segundo plano. Sua edição local continua ativa para revisão.'
-            : 'Dados do servidor carregados com sucesso.',
-        );
-      } catch (error) {
-        if (!hasLoggedBootstrapFailureRef.current) {
-          console.warn('Bootstrap do mapa indisponivel no backend. O app vai continuar com a base local.', error);
-          hasLoggedBootstrapFailureRef.current = true;
-        }
-        setBackendSyncState('error');
-        setAdminStatusMessage(
-          poiDataSource === 'local-workspace'
-            ? 'Não foi possível atualizar o servidor agora, mas sua edição local continua disponível.'
-            : 'Servidor indisponível. O mapa segue usando a base local.',
-        );
-      }
-    },
-    [draftPoiIds.length, poiDataSource],
-  );
-
-  const { syncBootstrap } = useMapBootstrap({
-    poiDataSource,
-    draftPoiIdsLength: draftPoiIds.length,
-    fromApiPoi,
-    sanitizePoiCollection,
-    persistPoiRuntimeBackup,
-    sanitizeAgendaPoiLinkRecord,
-    clearAdminWorkspaceSnapshot,
-    setBackendSyncState,
-    setServerPois,
-    setAdminAgendaPoiLinks,
-    setPois,
-    setPoiDataSource,
-    setDraftPoiIds,
-    setAdminStatusMessage,
-  });
-
   const routeShadowColor = mixColors(BRAND_COLORS.ink, BRAND_COLORS.primaryStrong, 0.24);
   const routeGuideColor = mixColors(BRAND_COLORS.highlight, BRAND_COLORS.surface, 0.36);
   const previewMarkerTone = mixColors(BRAND_COLORS.primaryStrong, BRAND_COLORS.ink, 0.1);
@@ -1452,7 +1334,6 @@ const ModaCenterMap = () => {
     () => (FREE_WALK_NAVIGATION_ENABLED ? 0 : pois.filter((poi) => !poi.nodeId).length),
     [pois],
   );
-  const syncedPoiCount = useMemo(() => pois.length - draftPoiIds.length, [pois.length, draftPoiIds.length]);
 
   const hasPoiManualRouteOrigin = Boolean(selectedOriginPoi);
   const hasManualMapRouteOrigin = Boolean(manualMapOrigin);
@@ -1671,9 +1552,6 @@ const ModaCenterMap = () => {
       ...prev,
       [poiId]: (prev[poiId] ?? 0) + 1,
     }));
-    void trackPoiAccess(poiId).catch((error) => {
-      console.warn('Não foi possível registrar acesso do POI no backend:', error);
-    });
   };
 
   const focusPoi = (poi: PointData, registerAccess = true, options?: { moveCamera?: boolean }) => {
@@ -1739,382 +1617,12 @@ const ModaCenterMap = () => {
     focusPoi(poi, true);
   };
 
-  const legacyUpdatePoiPosition = (poiId: string, lat: number, lng: number) => {
-    if (!isAdmin) return;
-
-    const mapped = latLngToImageOverlay(lat, lng);
-    const nextX = Math.round(mapped.x);
-    const nextY = Math.round(mapped.y);
-    const nearestNode = FREE_WALK_NAVIGATION_ENABLED ? null : findNearestNode(nextX, nextY, 90);
-
-    setPois((prev) =>
-      prev.map((poi) =>
-        poi.id === poiId
-          ? {
-              ...poi,
-              x: nextX,
-              y: nextY,
-              nodeId: nearestNode ?? undefined,
-            }
-          : poi,
-      ),
-    );
-
-    setEditingPoi((prev) =>
-      prev?.id === poiId
-        ? {
-            ...prev,
-            x: nextX,
-            y: nextY,
-            nodeId: nearestNode ?? undefined,
-          }
-        : prev,
-    );
-
-    setDraftPoiIds((prev) => (prev.includes(poiId) ? prev : [...prev, poiId]));
-    setPoiDataSource('local-workspace');
-    setAdminStatusMessage('Posição atualizada na edição local. Publique quando quiser enviar ao servidor.');
-
-    if (activePoiId === poiId) {
-      setFocusPoint((prev) =>
-        prev?.id === poiId
-          ? {
-              ...prev,
-              x: nextX,
-              y: nextY,
-              nodeId: nearestNode ?? undefined,
-            }
-          : prev,
-      );
-    }
-  };
-
-  const legacyStartNewPoiDraft = () => {
-    const fallbackX = focusPoint?.x ?? Math.round(MAP_WIDTH / 2);
-    const fallbackY = focusPoint?.y ?? Math.round(MAP_HEIGHT / 2);
-    setEditingPoi({
-      nome: '',
-      tipo: 'atividade',
-      x: fallbackX,
-      y: fallbackY,
-      descricao: '',
-      imagemUrl: defaultPoiImages.atividade,
-      contato: '',
-      corDestaque: '',
-      selo: '',
-      nodeId: FREE_WALK_NAVIGATION_ENABLED ? undefined : findNearestNode(fallbackX, fallbackY, 90) ?? undefined,
-    });
-    setAdminStatusMessage('Novo ponto pronto para edição. Clique no mapa para reposicionar se precisar.');
-  };
-
-  const legacyBuildPoiFromEditingState = () => {
-    const currentEditingPoi = editingPoi;
-
-    if (!currentEditingPoi || !currentEditingPoi.nome || !currentEditingPoi.tipo) {
-      alert('Informe nome e tipo do ponto.');
-      return null;
-    }
-
-    if (typeof currentEditingPoi.x !== 'number' || typeof currentEditingPoi.y !== 'number') {
-      alert('Coordenadas inválidas para o ponto.');
-      return null;
-    }
-
-    const nearestNode = FREE_WALK_NAVIGATION_ENABLED ? null : findNearestNode(currentEditingPoi.x, currentEditingPoi.y, 90);
-    if (!FREE_WALK_NAVIGATION_ENABLED && !nearestNode) {
-      alert('Este ponto está longe dos corredores de rota. Marque mais perto de um caminho.');
-      return null;
-    }
-
-    const baseId = currentEditingPoi.nome
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
-
-    return {
-      id: currentEditingPoi.id || `${baseId || 'ponto'}_${Date.now()}`,
-      x: currentEditingPoi.x,
-      y: currentEditingPoi.y,
-      nome: currentEditingPoi.nome.trim(),
-      tipo: currentEditingPoi.tipo,
-      descricao: currentEditingPoi.descricao?.trim() || undefined,
-      imagemUrl: currentEditingPoi.imagemUrl?.trim() || defaultPoiImages[currentEditingPoi.tipo],
-      contato: normalizeContact(currentEditingPoi.contato) || undefined,
-      corDestaque: normalizeHexColor(currentEditingPoi.corDestaque),
-      selo: normalizeBadgeText(currentEditingPoi.selo),
-      nodeId: nearestNode ?? undefined,
-    } satisfies PointData;
-  };
-
-  const legacySalvarRascunhoPonto = () => {
-    const novoPonto = legacyBuildPoiFromEditingState();
-    if (!novoPonto) return;
-
-    setPois((prev) => upsertPoiInCollection(prev, novoPonto));
-    setDraftPoiIds((prev) => (prev.includes(novoPonto.id) ? prev : [...prev, novoPonto.id]));
-    setPoiDataSource('local-workspace');
-    setEditingPoi(novoPonto);
-    setFocusPoint(novoPonto);
-    setActivePoiId(novoPonto.id);
-    setAdminStatusMessage(`Rascunho salvo localmente para ${novoPonto.nome}.`);
-  };
-
-  const legacyPublishPoiToBackend = async (poi: PointData, currentServerPois = serverPois) => {
-    const existsOnBackend = currentServerPois.some((item) => item.id === poi.id);
-    const syncedPoi = existsOnBackend
-      ? await updatePoi(poi.id, toPoiApiPayload(poi))
-      : await createPoi(toPoiApiPayload(poi, { includeId: true }));
-
-    return fromApiPoi(syncedPoi);
-  };
-
-  const legacyPublicarPontoAtual = async () => {
-    const novoPonto = legacyBuildPoiFromEditingState();
-    if (!novoPonto) return;
-
-    try {
-      const normalizedPoi = await legacyPublishPoiToBackend(novoPonto);
-
-      setPois((prev) => upsertPoiInCollection(prev, normalizedPoi));
-      setServerPois((prev) => upsertPoiInCollection(prev, normalizedPoi));
-      setDraftPoiIds((prev) => prev.filter((id) => id !== normalizedPoi.id));
-      setEditingPoi(normalizedPoi);
-      setFocusPoint(normalizedPoi);
-      setActivePoiId(normalizedPoi.id);
-      setBackendSyncState('ready');
-      setAdminStatusMessage(`Ponto ${normalizedPoi.nome} publicado no servidor.`);
-    } catch (error) {
-      console.error('Falha ao publicar ponto no backend:', error);
-      alert('Não foi possível publicar o ponto no servidor.');
-      setBackendSyncState('error');
-    }
-  };
-
-  const legacyPublicarRascunhos = async () => {
-    if (draftPoiIds.length === 0) {
-      setAdminStatusMessage('Não há rascunhos pendentes para publicar.');
-      return;
-    }
-
-    let nextPois = [...pois];
-    let nextServerPois = [...serverPois];
-    const remainingDraftIds: string[] = [];
-    let syncedCount = 0;
-
-    for (const poiId of draftPoiIds) {
-      const poi = nextPois.find((item) => item.id === poiId);
-      if (!poi) continue;
-
-      try {
-        const normalizedPoi = await legacyPublishPoiToBackend(poi, nextServerPois);
-        nextPois = upsertPoiInCollection(nextPois, normalizedPoi);
-        nextServerPois = upsertPoiInCollection(nextServerPois, normalizedPoi);
-        syncedCount += 1;
-      } catch (error) {
-        console.error(`Falha ao publicar o rascunho ${poiId}:`, error);
-        remainingDraftIds.push(poiId);
-      }
-    }
-
-    setPois(nextPois);
-    setServerPois(nextServerPois);
-    setDraftPoiIds(remainingDraftIds);
-    setBackendSyncState(remainingDraftIds.length > 0 ? 'error' : 'ready');
-    setAdminStatusMessage(
-      remainingDraftIds.length > 0
-        ? `${syncedCount} rascunho(s) publicados e ${remainingDraftIds.length} permaneceram pendentes.`
-        : `${syncedCount} rascunho(s) publicados com sucesso.`,
-    );
-  };
-
-  const legacyRemoverPontoLocal = (id: string) => {
-    if (!window.confirm('Remover este ponto apenas da edição local?')) return;
-
-    setPois((prev) => prev.filter((poi) => poi.id !== id));
-    setDraftPoiIds((prev) => prev.filter((poiId) => poiId !== id));
-    setManualVisiblePoiIds((prev) => prev.filter((poiId) => poiId !== id));
-    setPoiDataSource('local-workspace');
-    setFocusPoint((prev) => (prev?.id === id ? null : prev));
-    if (editingPoi?.id === id) setEditingPoi(null);
-    if (activePoiId === id) setActivePoiId(null);
-    if (selectedDestinationId === id) {
-      clearRoute();
-    }
-    setAdminStatusMessage('Ponto removido apenas da edição local.');
-  };
-
-  const legacyAbrirImportadorJson = () => {
-    adminImportInputRef.current?.click();
-  };
-
-  const legacyHandleAdminImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    try {
-      const content = await file.text();
-      const parsed = JSON.parse(content) as unknown;
-      const importedPois = parseStoredPoiList(parsed);
-
-      if (importedPois.length === 0) {
-        alert('O arquivo JSON não possui pontos válidos.');
-        return;
-      }
-
-      setPois(importedPois);
-      setDraftPoiIds(importedPois.map((poi) => poi.id));
-      setPoiDataSource('local-workspace');
-      setEditingPoi(importedPois[0]);
-      setFocusPoint(importedPois[0]);
-      setActivePoiId(importedPois[0].id);
-      clearRoute();
-      setAdminStatusMessage(`${importedPois.length} ponto(s) importados para a edição local.`);
-    } catch (error) {
-      console.error('Falha ao importar JSON de pontos:', error);
-      alert('Não foi possível importar este arquivo JSON.');
-    }
-  };
-
-  const legacyRestaurarFontePrincipal = () => {
-    if (!window.confirm('Descartar a edição local e voltar para a fonte principal?')) return;
-
-    setDraftPoiIds([]);
-    setEditingPoi(null);
-    clearAdminWorkspaceSnapshot();
-
-    if (serverPois.length > 0) {
-      setPois(serverPois);
-      setPoiDataSource('backend');
-      setAdminStatusMessage('Edição local descartada. Voltamos aos dados do servidor.');
-      return;
-    }
-
-    const runtimeBackup = loadPoiRuntimeBackup();
-    if (runtimeBackup.length > 0) {
-      setPois(runtimeBackup);
-      setPoiDataSource('local-backup');
-      setAdminStatusMessage('Base de trabalho descartada. Voltamos ao backup local mais recente.');
-      return;
-    }
-
-    setPois(getFrontSeedPois());
-    setPoiDataSource('front-seed');
-    setAdminStatusMessage('Base de trabalho descartada. Voltamos ao conjunto local padrão.');
-  };
-
-  const legacySalvarPonto = async () => {
-    await legacyPublicarPontoAtual();
-  };
-
-  const legacyDeletarPonto = async (id: string) => {
-    if (!window.confirm('Apagar este ponto permanentemente?')) return;
-
-    try {
-      await deletePoi(id);
-
-      setPois((prev) => prev.filter((poi) => poi.id !== id));
-      setServerPois((prev) => prev.filter((poi) => poi.id !== id));
-      setDraftPoiIds((prev) => prev.filter((poiId) => poiId !== id));
-      setPoiAccessCount((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      setManualVisiblePoiIds((prev) => prev.filter((poiId) => poiId !== id));
-      if (activePoiId === id) setActivePoiId(null);
-      if (selectedDestinationId === id) {
-        clearRoute();
-      }
-      setEditingPoi(null);
-      setBackendSyncState('ready');
-      setAdminStatusMessage('Ponto removido do servidor com sucesso.');
-    } catch (error) {
-      console.error('Falha ao deletar ponto no backend:', error);
-      alert('Não foi possível excluir o ponto no servidor.');
-    }
-  };
-
   const toggleType = (type: PoiType) => {
     setEnabledTypes((prev) => ({
       ...prev,
       [type]: !prev[type],
     }));
   };
-
-  const legacyToggleManualVisibility = (poiId: string) => {
-    setManualVisiblePoiIds((prev) =>
-      prev.includes(poiId) ? prev.filter((id) => id !== poiId) : [...prev, poiId],
-    );
-  };
-
-  const legacyBaixarJson = () => {
-    const payload = JSON.stringify(pois, null, 2);
-    const dataStr = `data:text/json;charset=utf-8,${encodeURIComponent(payload)}`;
-    const link = document.createElement('a');
-    link.setAttribute('href', dataStr);
-    link.setAttribute('download', POI_DATA_EXPORT_FILENAME);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  };
-
-  const legacyHandleSetAdminAgendaPoiLink = useCallback(
-    (sessionId: string, poiId: string | null) => {
-      const session = agendaSessions.find((item) => item.id === sessionId);
-      if (!session) return;
-
-      const nextPoiId = poiId?.trim() ?? '';
-      const nextLinks = { ...effectiveAdminAgendaPoiLinks };
-
-      if (!nextPoiId || nextPoiId === session.linkedPoiId) {
-        delete nextLinks[sessionId];
-      } else {
-        nextLinks[sessionId] = nextPoiId;
-      }
-
-      setAdminAgendaPoiLinks(nextLinks);
-      setAdminStatusMessage('Salvando vinculo do cronograma no servidor...');
-
-      void saveAgendaPoiLinks(nextLinks)
-        .then((response) => {
-          const persistedLinks = sanitizeAgendaPoiLinkRecord(response.links);
-          setAdminAgendaPoiLinks(persistedLinks);
-          setAdminStatusMessage(
-            nextPoiId && nextPoiId !== session.linkedPoiId
-              ? 'Vinculo manual do cronograma salvo no servidor.'
-              : 'Cronograma voltou a usar o vinculo automatico deste horario.',
-          );
-        })
-        .catch((error) => {
-          console.error('Falha ao salvar vinculos do cronograma no backend:', error);
-          setAdminStatusMessage(
-            'Nao foi possivel salvar o vinculo do cronograma no servidor agora. A alteracao segue apenas neste navegador.',
-          );
-        });
-    },
-    [effectiveAdminAgendaPoiLinks],
-  );
-
-  const legacyHandleResetAdminAgendaPoiLinks = useCallback(() => {
-    setAdminAgendaPoiLinks({});
-    setAdminStatusMessage('Removendo vinculos manuais do cronograma no servidor...');
-
-    void saveAgendaPoiLinks({})
-      .then((response) => {
-        setAdminAgendaPoiLinks(sanitizeAgendaPoiLinkRecord(response.links));
-        setAdminStatusMessage('Todos os vinculos manuais do cronograma foram removidos.');
-      })
-      .catch((error) => {
-        console.error('Falha ao limpar vinculos do cronograma no backend:', error);
-        setAdminStatusMessage(
-          'Nao foi possivel limpar os vinculos do cronograma no servidor agora. A mudanca segue apenas neste navegador.',
-        );
-      });
-  }, []);
 
   const {
     updatePoiPosition,
@@ -2123,8 +1631,6 @@ const ModaCenterMap = () => {
     handleAdminMapPointPick,
     startNewPoiDraft,
     salvarRascunhoPonto,
-    publicarRascunhos,
-    removerPontoLocal,
     abrirImportadorJson,
     handleAdminImportFileChange,
     restaurarFontePrincipal,
@@ -2148,14 +1654,11 @@ const ModaCenterMap = () => {
     clearRoute,
     pois,
     setPois,
-    serverPois,
-    setServerPois,
     draftPoiIds,
     setDraftPoiIds,
     setManualVisiblePoiIds,
     setPoiDataSource,
     setAdminStatusMessage,
-    setBackendSyncState,
     setPoiAccessCount,
     adminImportInputRef,
     effectiveAdminAgendaPoiLinks,
@@ -2169,30 +1672,10 @@ const ModaCenterMap = () => {
     loadPoiRuntimeBackup,
     getFrontSeedPois,
     clearAdminWorkspaceSnapshot,
-    sanitizeAgendaPoiLinkRecord,
-    fromApiPoi,
-    toPoiApiPayload,
     eventName: EVENT_NAME,
     exportFileName: POI_DATA_EXPORT_FILENAME,
     currentMapBuildLabel: CURRENT_MAP_BUILD_LABEL,
   });
-  void [
-    legacySyncBootstrap,
-    legacyUpdatePoiPosition,
-    legacyStartNewPoiDraft,
-    legacySalvarRascunhoPonto,
-    legacyPublicarRascunhos,
-    legacyRemoverPontoLocal,
-    legacyAbrirImportadorJson,
-    legacyHandleAdminImportFileChange,
-    legacyRestaurarFontePrincipal,
-    legacySalvarPonto,
-    legacyDeletarPonto,
-    legacyToggleManualVisibility,
-    legacyBaixarJson,
-    legacyHandleSetAdminAgendaPoiLink,
-    legacyHandleResetAdminAgendaPoiLinks,
-  ];
 
   useEffect(() => {
     setOfficialMapSurfaceUrls([...new Set([...OFFICIAL_MAP_SURFACE_URLS, ...OFFICIAL_MAP_FOREGROUND_SURFACE_URLS])]);
@@ -2265,11 +1748,6 @@ const ModaCenterMap = () => {
   useEffect(() => {
     persistPoiAccessCount(poiAccessCount);
   }, [poiAccessCount]);
-
-  useEffect(() => {
-    if (serverPois.length === 0) return;
-    persistPoiRuntimeBackup(serverPois);
-  }, [serverPois]);
 
   useEffect(() => {
     if (poiDataSource !== 'local-workspace' && draftPoiIds.length === 0) {
@@ -2352,11 +1830,6 @@ const ModaCenterMap = () => {
   const editingBadgePreview =
     normalizeBadgeText(editingPoi?.selo) ?? editingPoi?.nome?.trim().charAt(0).toUpperCase() ?? 'P';
   const sourceMetaMap: Record<PoiDataSource, { label: string; tint: string; tone: string }> = {
-    backend: {
-      label: 'Fonte ativa: servidor',
-      tint: 'rgba(106, 56, 208, 0.14)',
-      tone: BRAND_COLORS.primaryStrong,
-    },
     'local-workspace': {
       label: 'Fonte ativa: edição local',
       tint: 'rgba(217, 200, 255, 0.24)',
@@ -2374,14 +1847,7 @@ const ModaCenterMap = () => {
     },
   };
   const currentSourceMeta = sourceMetaMap[poiDataSource];
-  const editingPoiExistsOnBackend = Boolean(editingPoi?.id && serverPois.some((poi) => poi.id === editingPoi.id));
   const editingPoiIsDraft = Boolean(editingPoi?.id && draftPoiIdSet.has(editingPoi.id));
-  const backendSyncLabel =
-    backendSyncState === 'loading'
-      ? 'Conectando com o servidor'
-      : backendSyncState === 'ready'
-        ? 'Servidor sincronizado'
-        : 'Servidor indisponível';
   const getPoiRelatedSessions = useCallback(
     (poi: PointData) =>
       agendaSessions.filter((session) => sessionMatchesPoi(session, poi, effectiveAdminAgendaPoiLinks)).slice(0, 3),
@@ -2590,7 +2056,7 @@ const ModaCenterMap = () => {
           >
             Base de rota: `logica_nova.png`
             <br />
-            Base visual: `mapa_geral.svg`
+            Base visual: `mapa_geral.webp`
           </div>
         )}
 
@@ -2675,15 +2141,11 @@ const ModaCenterMap = () => {
                 freeWalkNavigationEnabled={FREE_WALK_NAVIGATION_ENABLED}
                 currentSourceMeta={currentSourceMeta}
                 currentMapBuildLabel={CURRENT_MAP_BUILD_LABEL}
-                backendSyncLabel={backendSyncLabel}
                 poisCount={pois.length}
                 draftPoiCount={draftPoiIds.length}
-                syncedPoiCount={syncedPoiCount}
                 disconnectedPoiCount={disconnectedPoiCount}
                 onStartNewPoiDraft={startNewPoiDraft}
-                onRefreshServer={() => void syncBootstrap({ forceReplace: true })}
                 onOpenJsonImporter={abrirImportadorJson}
-                onPublishDrafts={publicarRascunhos}
                 adminDenseButtonStyle={adminDenseButtonStyle}
                 adminDenseInputStyle={adminDenseInputStyle}
                 adminSearchTerm={adminSearchTerm}
@@ -2720,7 +2182,6 @@ const ModaCenterMap = () => {
           isOpen={isAdmin && Boolean(editingPoi)}
           editingPoi={editingPoi}
           editingPoiIsDraft={editingPoiIsDraft}
-          editingPoiExistsOnBackend={editingPoiExistsOnBackend}
           freeWalkNavigationEnabled={FREE_WALK_NAVIGATION_ENABLED}
           brandColors={{
             ink: BRAND_COLORS.ink,
@@ -2739,9 +2200,8 @@ const ModaCenterMap = () => {
           onPositionInputChange={updateEditingPoiCoordinates}
           onSaveLocation={salvarLocalizacaoAtual}
           onSaveDraft={salvarRascunhoPonto}
-          onPublishNow={salvarPonto}
-          onRemoveLocal={removerPontoLocal}
-          onDeleteFromServer={deletarPonto}
+          onSavePoi={salvarPonto}
+          onDeletePoi={deletarPonto}
           onClose={() => setEditingPoi(null)}
         />
 
@@ -2929,12 +2389,14 @@ const ModaCenterMap = () => {
             boxZoom={false}
             keyboard={false}
             dragging={true}
-            zoomSnap={0.1}
-            zoomDelta={0.1}
-            preferCanvas={false}
+            zoomSnap={0.25}
+            zoomDelta={0.25}
+            preferCanvas={true}
             zoomAnimation={!prefersReducedMotion}
             markerZoomAnimation={!prefersReducedMotion}
             fadeAnimation={!prefersReducedMotion}
+            wheelDebounceTime={40}
+            wheelPxPerZoomLevel={80}
           >
             <MapViewportBoundsController
               isMobile={isMobile}

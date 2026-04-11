@@ -2,7 +2,7 @@ export type PoiType = 'atividade' | 'servico' | 'banheiro' | 'entrada';
 
 export type PoiAccessCount = Record<string, number>;
 export type AgendaDayId = '21';
-export type PoiDataSource = 'backend' | 'local-workspace' | 'local-backup' | 'front-seed';
+export type PoiDataSource = 'local-workspace' | 'local-backup' | 'front-seed';
 export type DockPanel = 'pins' | 'route' | 'agenda' | 'partners' | null;
 export type DockPanelKey = Exclude<DockPanel, null>;
 export type AgendaSessionPoiLinkOverrides = Record<string, string>;
