@@ -85,8 +85,8 @@ export const PoiPopupCard = ({
     syncPopupLayout,
   ]);
 
-  const popupPaddingTopLeft: [number, number] = popupSizePreset.isMobile ? [14, 84] : [18, 104];
-  const popupPaddingBottomRight: [number, number] = popupSizePreset.isMobile ? [14, 170] : [18, 34];
+  const popupPaddingTopLeft: [number, number] = popupSizePreset.isMobile ? [16, 96] : [20, 112];
+  const popupPaddingBottomRight: [number, number] = popupSizePreset.isMobile ? [16, 200] : [20, 48];
 
   return (
     <Popup

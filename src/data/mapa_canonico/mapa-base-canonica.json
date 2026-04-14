@@ -11,10 +11,10 @@
     "alphaThreshold": 1,
     "gridSize": 2,
     "alignment": {
-      "offsetX": 0,
-      "offsetY": 0,
-      "scaleX": 1,
-      "scaleY": 1
+      "offsetX": 67.46,
+      "offsetY": 40.17,
+      "scaleX": 0.9112,
+      "scaleY": 0.9118
     },
     "componentBridgeMaxDistance": 18,
     "componentBridgeMaxSize": 80,

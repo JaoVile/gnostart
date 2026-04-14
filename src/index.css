@@ -216,13 +216,27 @@ body {
 
 .leaflet-container .store-poi-popup .leaflet-popup-content-wrapper {
   max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 120px);
   overflow: hidden;
+  border-radius: 18px;
 }
 
 .leaflet-container .store-poi-popup .leaflet-popup-content {
   max-width: calc(100vw - 16px);
-  max-height: calc(100dvh - 138px);
-  overflow: hidden;
+  max-height: calc(100dvh - 132px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.leaflet-container .store-poi-popup .leaflet-popup-content::-webkit-scrollbar {
+  width: 6px;
+}
+.leaflet-container .store-poi-popup .leaflet-popup-content::-webkit-scrollbar-thumb {
+  background: rgba(var(--color-primary-rgb), 0.32);
+  border-radius: 999px;
 }
 
 .leaflet-container .leaflet-popup-tip {
@@ -732,7 +746,6 @@ body {
   width: min(var(--popup-fixed-width, 228px), var(--popup-max-width, 280px), calc(100vw - 20px));
   min-width: 0;
   max-width: 100%;
-  max-height: min(var(--popup-max-height, 320px), calc(100dvh - 152px));
   padding: var(--popup-padding);
   border-radius: var(--popup-radius);
   background:
@@ -742,7 +755,7 @@ body {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.88),
     0 16px 28px rgba(var(--color-primary-rgb), 0.08);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .store-popup-card.popup-tier-medium {

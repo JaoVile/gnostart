@@ -210,19 +210,19 @@ const POI_PREVIEW_SIZES_DESKTOP: Record<PoiPinScaleTier, PoiPreviewTierSize> = {
     width: 196,
     minWidth: 188,
     maxWidth: 210,
-    maxHeight: 232,
+    maxHeight: 360,
   },
   'medium-large': {
     width: 212,
     minWidth: 196,
     maxWidth: 228,
-    maxHeight: 258,
+    maxHeight: 400,
   },
   large: {
     width: 228,
     minWidth: 208,
     maxWidth: 246,
-    maxHeight: 288,
+    maxHeight: 440,
   },
 };
 
@@ -231,19 +231,19 @@ const POI_PREVIEW_SIZES_MOBILE: Record<PoiPinScaleTier, PoiPreviewTierSize> = {
     width: 188,
     minWidth: 180,
     maxWidth: 202,
-    maxHeight: 222,
+    maxHeight: 340,
   },
   'medium-large': {
     width: 198,
     minWidth: 188,
     maxWidth: 214,
-    maxHeight: 240,
+    maxHeight: 380,
   },
   large: {
     width: 210,
     minWidth: 196,
     maxWidth: 228,
-    maxHeight: 264,
+    maxHeight: 420,
   },
 };
 
